@@ -1,0 +1,128 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function userDocExists() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function getUserData() {
+      return userDocExists() ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data : {};
+    }
+
+    function isSuperAdmin() {
+      return isAuthenticated() && (
+        !userDocExists() ||
+        getUserData().role == 'super_admin' ||
+        request.auth.token.role == 'super_admin'
+      );
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        !userDocExists() ||
+        getUserData().role in ['super_admin', 'admin'] ||
+        request.auth.token.role in ['super_admin', 'admin']
+      );
+    }
+
+    function hasPermission(perm) {
+      return isAuthenticated() && (
+        isSuperAdmin() ||
+        (userDocExists() && getUserData().permissions != null && perm in getUserData().permissions)
+      );
+    }
+
+    function canAccessCountry(countryCode) {
+      return isAuthenticated() && (
+        isSuperAdmin() ||
+        (userDocExists() && getUserData().assignedCountries != null && getUserData().assignedCountries.hasAny(['*', countryCode]))
+      );
+    }
+
+    // USERS COLLECTION
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow write: if isSuperAdmin() || (isAuthenticated() && request.auth.uid == userId);
+    }
+
+    // ROLES & CUSTOM PERMISSION TEMPLATES
+    match /roles/{roleId} {
+      allow read: if isAuthenticated();
+      allow write: if isSuperAdmin();
+    }
+
+    // COUNTRIES
+    match /countries/{countryId} {
+      allow read: if isAuthenticated();
+      allow write: if hasPermission('country.manage') || isSuperAdmin();
+    }
+
+    // CUSTOM FIELD DEFINITIONS
+    match /customFieldDefinitions/{fieldId} {
+      allow read: if isAuthenticated();
+      allow write: if hasPermission('settings.manage') || isSuperAdmin();
+    }
+
+    // STUDENTS
+    match /students/{studentId} {
+      allow read: if isAuthenticated() && canAccessCountry(resource.data.countryOfInterest);
+      allow create: if hasPermission('student.create');
+      allow update: if hasPermission('student.edit') && canAccessCountry(resource.data.countryOfInterest);
+      allow delete: if hasPermission('student.delete') || isSuperAdmin();
+    }
+
+    // APPLICATIONS
+    match /applications/{applicationId} {
+      allow read: if isAuthenticated() && canAccessCountry(resource.data.countryCode);
+      allow create: if hasPermission('application.create');
+      allow update: if (hasPermission('application.edit') || hasPermission('application.change_status')) && canAccessCountry(resource.data.countryCode);
+      allow delete: if hasPermission('application.delete') || isSuperAdmin();
+    }
+
+    // B2B PARTNERS
+    match /partners/{partnerId} {
+      allow read: if isAuthenticated() && hasPermission('module.partners');
+      allow write: if hasPermission('partner.manage') || isSuperAdmin();
+    }
+
+    // INVOICES
+    match /invoices/{invoiceId} {
+      allow read: if hasPermission('finance.view') || isSuperAdmin();
+      allow write: if hasPermission('finance.create_invoice') || isSuperAdmin();
+    }
+
+    // PAYMENTS
+    match /payments/{paymentId} {
+      allow read: if hasPermission('finance.view') || isSuperAdmin();
+      allow write: if hasPermission('finance.record_payment') || isSuperAdmin();
+    }
+
+    // EXPENSES
+    match /expenses/{expenseId} {
+      allow read: if hasPermission('finance.view') || isSuperAdmin();
+      allow write: if hasPermission('finance.record_expense') || isSuperAdmin();
+    }
+
+    // DOCUMENTS
+    match /documents/{docId} {
+      allow read: if isAuthenticated() && canAccessCountry(resource.data.countryCode);
+      allow create: if hasPermission('document.upload');
+      allow update: if hasPermission('document.review') || isSuperAdmin();
+      allow delete: if hasPermission('document.delete') || isSuperAdmin();
+    }
+
+    // ACTIVITY / AUDIT LOGS (append-only)
+    match /activityLogs/{logId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if false; // Immutable audit log
+    }
+  }
+}
+
