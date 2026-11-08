@@ -100,22 +100,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUserProfile(profile);
         setIsSimulated(false);
       } else {
-        // If no user is logged in yet, check localStorage for a demo session,
-        // otherwise initialize default administrative session so the user can immediately test
-        const savedDemo = localStorage.getItem('skolar_active_session');
-        if (savedDemo) {
+        // Check if there is an existing authenticated session saved
+        const savedSession = localStorage.getItem('skolar_active_session');
+        if (savedSession) {
           try {
-            const parsed = JSON.parse(savedDemo);
+            const parsed = JSON.parse(savedSession);
             setUserProfile(parsed);
-            setIsSimulated(true);
+            setIsSimulated(false);
           } catch {
-            setUserProfile(DEFAULT_ADMIN_PROFILE);
-            setIsSimulated(true);
+            setUserProfile(null);
+            setIsSimulated(false);
           }
         } else {
-          // Provide default admin preview session
-          setUserProfile(DEFAULT_ADMIN_PROFILE);
-          setIsSimulated(true);
+          // Always start with login page: no direct auto-login
+          setUserProfile(null);
+          setIsSimulated(false);
         }
         setFirebaseUser(null);
       }
