@@ -747,9 +747,6 @@ export function initProductionWorkspace(): void {
   if (!currentFields || currentFields.length === 0) {
     setLocalCache("customFieldDefinitions", SEED_CUSTOM_FIELDS);
   }
-
-  // 3. Purge all mock demo records from operational collections
-  clearDemoData();
 }
 
 /**

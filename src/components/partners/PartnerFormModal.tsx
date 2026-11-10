@@ -3,6 +3,7 @@ import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { Input } from '../common/Input';
 import { Select } from '../common/Select';
+import { CreatableSelect } from '../common/CreatableSelect';
 import { Partner, PartnerType, Currency } from '../../types';
 
 interface PartnerFormModalProps {
@@ -124,17 +125,21 @@ export const PartnerFormModal: React.FC<PartnerFormModalProps> = ({
             required
           />
 
-          <Select
+          <CreatableSelect
             label="Partner Category *"
+            categoryKey="partner_types"
             value={partnerType}
-            onChange={(e) => setPartnerType(e.target.value as PartnerType)}
+            onChange={(val) => setPartnerType(val as PartnerType)}
             options={[
-              { value: 'Content Creator', label: 'Content Creator / Influencer' },
-              { value: 'Education Agent', label: 'Education Agent' },
-              { value: 'Referral Partner', label: 'Referral Partner' },
-              { value: 'Business Partner', label: 'Institutional / Business Partner' },
-              { value: 'Other', label: 'Other' },
+              'Content Creator',
+              'Education Agent',
+              'Referral Partner',
+              'Business Partner',
+              'Institutional Partner',
+              'Other',
             ]}
+            placeholder="Select or add type..."
+            required
           />
         </div>
 
@@ -171,11 +176,13 @@ export const PartnerFormModal: React.FC<PartnerFormModalProps> = ({
             onChange={(e) => setCompany(e.target.value)}
           />
 
-          <Input
+          <CreatableSelect
             label="Operating Country / Region"
-            placeholder="e.g. India, UAE, Italy"
+            categoryKey="operating_countries"
             value={country}
-            onChange={(e) => setCountry(e.target.value)}
+            onChange={(val) => setCountry(val)}
+            options={['India', 'Italy', 'Mongolia', 'UAE', 'UK', 'Germany', 'Nepal', 'Nigeria']}
+            placeholder="Select or add country..."
           />
         </div>
 

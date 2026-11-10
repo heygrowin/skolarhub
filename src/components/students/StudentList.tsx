@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Student, Partner, AcquisitionType } from '../../types';
 import { getStudents, deleteStudent, createStudent, updateStudent } from '../../services/studentService';
 import { getPartners } from '../../services/partnerService';
 import { useCountry } from '../../context/CountryContext';
+import { useYear } from '../../context/YearContext';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { Button } from '../common/Button';
@@ -22,7 +23,12 @@ import {
   Phone, 
   ChevronRight,
   Sparkles,
-  RefreshCw 
+  RefreshCw,
+  Calendar,
+  ArrowUpDown,
+  GraduationCap,
+  Layers,
+  List
 } from 'lucide-react';
 
 interface StudentListProps {
@@ -33,6 +39,9 @@ interface StudentListProps {
   onPreviewDocument?: (doc: any) => void;
 }
 
+type SortField = 'year' | 'date' | 'name';
+type SortOrder = 'asc' | 'desc';
+
 export const StudentList: React.FC<StudentListProps> = ({
   onOpenCreateApplication = () => {},
   onOpenCreateInvoice = () => {},
@@ -41,6 +50,7 @@ export const StudentList: React.FC<StudentListProps> = ({
   onPreviewDocument = () => {},
 }) => {
   const { countries, selectedCountryFilter, setSelectedCountryFilter } = useCountry();
+  const { years, selectedYearFilter, setSelectedYearFilter } = useYear();
   const { hasPermission } = useAuth();
   const { success, error } = useToast();
 
@@ -53,6 +63,11 @@ export const StudentList: React.FC<StudentListProps> = ({
   const [acquisitionFilter, setAcquisitionFilter] = useState<AcquisitionType | 'ALL'>('ALL');
   const [partnerFilter, setPartnerFilter] = useState<string>('');
 
+  // Sorting & Year-wise Grouping
+  const [sortField, setSortField] = useState<SortField>('date');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
+  const [groupByYear, setGroupByYear] = useState<boolean>(false);
+
   // Modals
   const [formModalOpen, setFormModalOpen] = useState<boolean>(false);
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
@@ -63,7 +78,7 @@ export const StudentList: React.FC<StudentListProps> = ({
   const canEdit = hasPermission('student.edit');
   const canDelete = hasPermission('student.delete');
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (forceRefresh: boolean = false) => {
     setLoading(true);
     try {
       const [studentRes, partnerList] = await Promise.all([
@@ -72,8 +87,9 @@ export const StudentList: React.FC<StudentListProps> = ({
           acquisitionType: acquisitionFilter !== 'ALL' ? acquisitionFilter : undefined,
           partnerId: partnerFilter || undefined,
           searchQuery: searchTerm,
+          forceRefresh,
         }),
-        getPartners(),
+        getPartners(forceRefresh),
       ]);
 
       setStudents(studentRes.students);
@@ -87,8 +103,82 @@ export const StudentList: React.FC<StudentListProps> = ({
   }, [selectedCountryFilter, acquisitionFilter, partnerFilter, searchTerm, error]);
 
   useEffect(() => {
-    loadData();
+    loadData(false);
   }, [loadData]);
+
+  // Extract distinct years and calculate counts (merging YearContext + live students)
+  const availableYears = useMemo(() => {
+    const yearsSet = new Set<string>(years);
+    students.forEach(s => {
+      if (s.intakeYear) {
+        yearsSet.add(s.intakeYear);
+      } else if (s.registrationDate) {
+        yearsSet.add(new Date(s.registrationDate).getFullYear().toString());
+      }
+    });
+    return Array.from(yearsSet).sort();
+  }, [students, years]);
+
+  const yearCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    students.forEach(s => {
+      const yr = s.intakeYear || (s.registrationDate ? new Date(s.registrationDate).getFullYear().toString() : '2025');
+      counts[yr] = (counts[yr] || 0) + 1;
+    });
+    return counts;
+  }, [students]);
+
+  // Filter & Sort students
+  const filteredStudents = useMemo(() => {
+    let result = [...students];
+    if (selectedYearFilter !== 'ALL') {
+      result = result.filter(s => {
+        const studentYear = s.intakeYear || (s.registrationDate ? new Date(s.registrationDate).getFullYear().toString() : '2025');
+        return studentYear === selectedYearFilter;
+      });
+    }
+
+    // Apply sorting
+    result.sort((a, b) => {
+      if (sortField === 'year') {
+        const yrA = a.intakeYear || (a.registrationDate ? new Date(a.registrationDate).getFullYear().toString() : '2025');
+        const yrB = b.intakeYear || (b.registrationDate ? new Date(b.registrationDate).getFullYear().toString() : '2025');
+        const cmp = yrA.localeCompare(yrB);
+        return sortOrder === 'asc' ? cmp : -cmp;
+      }
+      if (sortField === 'name') {
+        const cmp = a.fullName.localeCompare(b.fullName);
+        return sortOrder === 'asc' ? cmp : -cmp;
+      }
+      const timeA = new Date(a.createdAt || a.registrationDate || 0).getTime();
+      const timeB = new Date(b.createdAt || b.registrationDate || 0).getTime();
+      return sortOrder === 'asc' ? timeA - timeB : timeB - timeA;
+    });
+
+    return result;
+  }, [students, selectedYearFilter, sortField, sortOrder]);
+
+  // Grouped Year-Wise structure
+  const groupedByYearEntries = useMemo(() => {
+    const map = new Map<string, Student[]>();
+    filteredStudents.forEach(s => {
+      const yr = s.intakeYear || (s.registrationDate ? new Date(s.registrationDate).getFullYear().toString() : '2025');
+      if (!map.has(yr)) map.set(yr, []);
+      map.get(yr)!.push(s);
+    });
+    return Array.from(map.entries()).sort((a, b) =>
+      sortOrder === 'asc' ? a[0].localeCompare(b[0]) : b[0].localeCompare(a[0])
+    );
+  }, [filteredStudents, sortOrder]);
+
+  const toggleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortOrder(prev => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortField(field);
+      setSortOrder('desc');
+    }
+  };
 
   const handleCreateOrUpdateStudent = async (data: any) => {
     try {
@@ -138,11 +228,20 @@ export const StudentList: React.FC<StudentListProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <Button
+            variant={groupByYear ? 'gold' : 'outline'}
+            size="sm"
+            onClick={() => setGroupByYear(!groupByYear)}
+            icon={groupByYear ? <List className="w-3.5 h-3.5" /> : <Layers className="w-3.5 h-3.5" />}
+          >
+            {groupByYear ? 'Unified Table' : 'Group Year-Wise'}
+          </Button>
+
           <Button
             variant="secondary"
             size="sm"
-            onClick={loadData}
+            onClick={() => loadData(true)}
             loading={loading}
             icon={<RefreshCw className="w-3.5 h-3.5" />}
           >
@@ -162,6 +261,48 @@ export const StudentList: React.FC<StudentListProps> = ({
               Add Student
             </Button>
           )}
+        </div>
+      </div>
+
+      {/* TOP-SIDE INTAKE YEAR SELECTOR BUTTONS */}
+      <div className="p-3 bg-white rounded-2xl border border-slate-200/90 shadow-soft">
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+          <span className="text-xs font-bold text-navy-950 uppercase tracking-wider shrink-0 flex items-center gap-1.5 px-2">
+            <Calendar className="w-4 h-4 text-gold-600" />
+            Intake Year:
+          </span>
+
+          <button
+            onClick={() => setSelectedYearFilter('ALL')}
+            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
+              selectedYearFilter === 'ALL'
+                ? 'bg-navy-950 text-gold-400 shadow-sm ring-2 ring-gold-400/40'
+                : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200'
+            }`}
+          >
+            All Years ({students.length})
+          </button>
+
+          {availableYears.map(yr => {
+            const count = yearCounts[yr] || 0;
+            const isSelected = selectedYearFilter === yr;
+            return (
+              <button
+                key={yr}
+                onClick={() => setSelectedYearFilter(yr)}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer flex items-center gap-1.5 ${
+                  isSelected
+                    ? 'bg-gold-500 text-navy-950 shadow-sm ring-2 ring-gold-400'
+                    : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200'
+                }`}
+              >
+                <span>{yr}</span>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${isSelected ? 'bg-navy-950/20 text-navy-950' : 'bg-slate-200 text-slate-600'}`}>
+                  {count}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -231,17 +372,100 @@ export const StudentList: React.FC<StudentListProps> = ({
       </div>
 
       {/* Students Data Display */}
-      {students.length === 0 ? (
+      {filteredStudents.length === 0 ? (
         <EmptyState
           icon={<Users className="w-8 h-8" />}
           title="No Students Found"
-          description="No students matched your search and filter criteria. You can register a new student or clear filters."
+          description={
+            selectedYearFilter !== 'ALL'
+              ? `No candidates registered under intake year ${selectedYearFilter}. Try selecting 'All Years' or register a new candidate.`
+              : "No students matched your search and filter criteria. You can register a new student or clear filters."
+          }
           actionText={canCreate ? "Register Candidate" : undefined}
           onAction={() => {
             setEditingStudent(null);
             setFormModalOpen(true);
           }}
         />
+      ) : groupByYear ? (
+        /* Year-Wise Segregated Directory View */
+        <div className="space-y-6">
+          {groupedByYearEntries.map(([year, groupStudents]) => (
+            <div key={year} className="bg-white rounded-3xl border border-slate-200/90 shadow-soft overflow-hidden">
+              <div className="px-5 py-3.5 bg-gradient-to-r from-navy-950 to-navy-900 text-white flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <span className="p-1.5 rounded-xl bg-gold-400/20 text-gold-400">
+                    <GraduationCap className="w-4 h-4" />
+                  </span>
+                  <div>
+                    <h3 className="text-sm font-bold tracking-tight">Intake Cohort {year}</h3>
+                    <p className="text-[11px] text-slate-300">{groupStudents.length} registered candidate{groupStudents.length === 1 ? '' : 's'}</p>
+                  </div>
+                </div>
+                <Badge variant="gold" size="sm">{year}</Badge>
+              </div>
+
+              <div className="divide-y divide-slate-100">
+                {groupStudents.map((student) => {
+                  const countryFlag = student.countryOfInterest === 'IT' ? '🇮🇹' : student.countryOfInterest === 'MN' ? '🇲🇳' : '🌐';
+                  const countryName = student.countryOfInterest === 'IT' ? 'Italy' : student.countryOfInterest === 'MN' ? 'Mongolia' : student.countryOfInterest;
+                  return (
+                    <div
+                      key={student.id}
+                      onClick={() => handleOpenDetail(student)}
+                      className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/80 transition-colors cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-xl bg-navy-100 text-navy-900 font-bold flex items-center justify-center shrink-0">
+                          {student.fullName.charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-navy-950 text-sm">{student.fullName}</span>
+                            <Badge variant={student.acquisitionType === 'B2B' ? 'gold' : 'blue'} size="sm">
+                              {student.acquisitionType}
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-slate-500">
+                            {student.email} {student.phone ? `• ${student.phone}` : ''} • {countryFlag} {countryName}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 self-end sm:self-center" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          onClick={() => handleOpenDetail(student)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-navy-900 hover:bg-slate-100 transition-colors"
+                          title="View Dossier"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </button>
+                        {canEdit && (
+                          <button
+                            onClick={() => handleOpenEdit(student)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-gold-600 hover:bg-gold-50 transition-colors"
+                            title="Edit Candidate"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+                        )}
+                        {canDelete && (
+                          <button
+                            onClick={() => handleDeleteStudent(student)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                            title="Delete Record"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
       ) : (
         <div className="bg-white rounded-2xl border border-slate-200/80 shadow-soft overflow-hidden">
           {/* Desktop Table View */}
@@ -249,18 +473,44 @@ export const StudentList: React.FC<StudentListProps> = ({
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="border-b border-slate-200/80 bg-slate-50/70 text-slate-500 font-bold uppercase tracking-wider text-[11px]">
-                  <th className="py-3.5 px-5">Candidate</th>
+                  <th 
+                    onClick={() => toggleSort('name')}
+                    className="py-3.5 px-5 cursor-pointer hover:text-navy-950 select-none"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span>Candidate</span>
+                      <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                    </div>
+                  </th>
+                  <th 
+                    onClick={() => toggleSort('year')}
+                    className="py-3.5 px-4 cursor-pointer hover:text-navy-950 select-none"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span>Intake Year</span>
+                      <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                    </div>
+                  </th>
                   <th className="py-3.5 px-4">Destination</th>
                   <th className="py-3.5 px-4">Channel & Source</th>
                   <th className="py-3.5 px-4">Academic Background</th>
-                  <th className="py-3.5 px-4">Registered</th>
+                  <th 
+                    onClick={() => toggleSort('date')}
+                    className="py-3.5 px-4 cursor-pointer hover:text-navy-950 select-none"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span>Registered</span>
+                      <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                    </div>
+                  </th>
                   <th className="py-3.5 px-5 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {students.map((student) => {
+                {filteredStudents.map((student) => {
                   const countryFlag = student.countryOfInterest === 'IT' ? '🇮🇹' : student.countryOfInterest === 'MN' ? '🇲🇳' : '🌐';
                   const countryName = student.countryOfInterest === 'IT' ? 'Italy' : student.countryOfInterest === 'MN' ? 'Mongolia' : student.countryOfInterest;
+                  const displayYear = student.intakeYear || (student.registrationDate ? new Date(student.registrationDate).getFullYear().toString() : '2025');
 
                   return (
                     <tr
@@ -290,6 +540,13 @@ export const StudentList: React.FC<StudentListProps> = ({
                             </span>
                           </div>
                         </div>
+                      </td>
+
+                      {/* Intake Year */}
+                      <td className="py-4 px-4">
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-xl text-xs font-bold bg-gold-50 text-gold-900 border border-gold-200/80 shadow-2xs">
+                          🎓 {displayYear}
+                        </span>
                       </td>
 
                       {/* Country */}
@@ -367,52 +624,54 @@ export const StudentList: React.FC<StudentListProps> = ({
 
           {/* Mobile Card Grid View */}
           <div className="lg:hidden divide-y divide-slate-100">
-            {students.map((student) => (
-              <div
-                key={student.id}
-                onClick={() => handleOpenDetail(student)}
-                className="p-4 hover:bg-slate-50 transition-colors cursor-pointer space-y-3"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-9 h-9 rounded-xl bg-navy-100 text-navy-900 font-bold flex items-center justify-center shrink-0">
-                      {student.fullName.charAt(0).toUpperCase()}
+            {filteredStudents.map((student) => {
+              const displayYear = student.intakeYear || (student.registrationDate ? new Date(student.registrationDate).getFullYear().toString() : '2025');
+              return (
+                <div
+                  key={student.id}
+                  onClick={() => handleOpenDetail(student)}
+                  className="p-4 space-y-3 cursor-pointer hover:bg-slate-50 transition-colors"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-navy-950 text-sm">{student.fullName}</span>
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-lg text-[10px] font-bold bg-gold-50 text-gold-900 border border-gold-200">
+                        {displayYear}
+                      </span>
                     </div>
-                    <div>
-                      <h4 className="text-sm font-bold text-navy-950">{student.fullName}</h4>
-                      <p className="text-[11px] text-slate-400">{student.email}</p>
-                    </div>
+                    <Badge variant={student.acquisitionType === 'B2B' ? 'gold' : 'blue'} size="sm">
+                      {student.acquisitionType}
+                    </Badge>
                   </div>
-                  <ChevronRight className="w-4 h-4 text-slate-400" />
+                  <div className="text-xs text-slate-500">
+                    <p>{student.email} • {student.phone}</p>
+                    <p className="mt-1 text-slate-400">Destination: {student.countryOfInterest} • {student.previousEducation}</p>
+                  </div>
                 </div>
-
-                <div className="flex flex-wrap items-center gap-2 text-xs">
-                  <Badge variant="navy">
-                    {student.countryOfInterest === 'IT' ? '🇮🇹 Italy' : student.countryOfInterest === 'MN' ? '🇲🇳 Mongolia' : student.countryOfInterest}
-                  </Badge>
-                  <Badge variant={student.acquisitionType === 'B2B' ? 'gold' : 'blue'}>
-                    {student.acquisitionType} {student.partnerName ? `• ${student.partnerName}` : ''}
-                  </Badge>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
 
-      {/* Student Form Modal (Add / Edit) */}
+      {/* Modals */}
       <StudentFormModal
         isOpen={formModalOpen}
-        onClose={() => setFormModalOpen(false)}
+        onClose={() => {
+          setFormModalOpen(false);
+          setEditingStudent(null);
+        }}
         onSubmit={handleCreateOrUpdateStudent}
         initialData={editingStudent}
         partners={partners}
       />
 
-      {/* Student Detail Modal */}
       <StudentDetailModal
         isOpen={detailModalOpen}
-        onClose={() => setDetailModalOpen(false)}
+        onClose={() => {
+          setDetailModalOpen(false);
+          setViewingStudent(null);
+        }}
         student={viewingStudent}
         onEditStudent={handleOpenEdit}
         onOpenCreateApplication={onOpenCreateApplication}
@@ -424,4 +683,3 @@ export const StudentList: React.FC<StudentListProps> = ({
     </div>
   );
 };
-

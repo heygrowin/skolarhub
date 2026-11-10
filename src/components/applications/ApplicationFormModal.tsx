@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
-import { Input } from '../common/Input';
 import { Select } from '../common/Select';
-import { Student, Country, ApplicationStatus } from '../../types';
+import { CreatableSelect } from '../common/CreatableSelect';
+import { Student, ApplicationStatus } from '../../types';
 import { useCountry } from '../../context/CountryContext';
+import { useYear } from '../../context/YearContext';
 import { useToast } from '../../context/ToastContext';
 
 interface ApplicationFormModalProps {
@@ -15,6 +16,37 @@ interface ApplicationFormModalProps {
   students: Student[];
 }
 
+const DEFAULT_COURSES = [
+  'Single-Cycle Medicine & Surgery (English IMAT)',
+  'MBBS / General Medicine (English Medium)',
+  'MSc Computer Science & Engineering',
+  'MSc Data Science & AI',
+  'BSc Business Economics & Finance',
+  'BSc Architecture & Urban Design',
+  'MBBS / MD Clinical Medicine',
+  'BSc Biotechnology & Pharmacy',
+];
+
+const DEFAULT_SESSIONS = [
+  'Fall 2025',
+  'Spring 2026',
+  'Fall 2026',
+  'Spring 2027',
+  'Fall 2027',
+];
+
+const DEFAULT_STATUSES = [
+  'New Enquiry',
+  'Profile Review',
+  'Documents Pending',
+  'Application Preparation',
+  'Application Submitted',
+  'Awaiting University Response',
+  'Admission Received',
+  'Visa Process',
+  'Completed',
+];
+
 export const ApplicationFormModal: React.FC<ApplicationFormModalProps> = ({
   isOpen,
   onClose,
@@ -23,32 +55,55 @@ export const ApplicationFormModal: React.FC<ApplicationFormModalProps> = ({
   students,
 }) => {
   const { countries } = useCountry();
+  const { years, selectedYearFilter } = useYear();
   const { error: toastError } = useToast();
   const [loading, setLoading] = useState<boolean>(false);
 
   const [studentId, setStudentId] = useState<string>('');
   const [countryCode, setCountryCode] = useState<string>('IT');
+  const [intakeYear, setIntakeYear] = useState<string>('2026');
   const [university, setUniversity] = useState<string>('');
   const [course, setCourse] = useState<string>('');
   const [intake, setIntake] = useState<string>('Fall 2026');
-  const [status, setStatus] = useState<ApplicationStatus>('New Enquiry');
+  const [status, setStatus] = useState<string>('New Enquiry');
   const [notes, setNotes] = useState<string>('');
 
   useEffect(() => {
-    if (preselectedStudentId) {
-      setStudentId(preselectedStudentId);
-      const s = students.find(item => item.id === preselectedStudentId);
-      if (s?.countryOfInterest) {
-        setCountryCode(s.countryOfInterest);
+    if (isOpen) {
+      const targetId = preselectedStudentId || students[0]?.id || '';
+      setStudentId(targetId);
+      const matched = students.find(item => item.id === targetId);
+      if (matched) {
+        if (matched.countryOfInterest) setCountryCode(matched.countryOfInterest);
+        setIntakeYear(
+          matched.intakeYear || (selectedYearFilter !== 'ALL' ? selectedYearFilter : String(new Date().getFullYear()))
+        );
+      } else {
+        setIntakeYear(selectedYearFilter !== 'ALL' ? selectedYearFilter : String(new Date().getFullYear()));
       }
-    } else if (students.length > 0 && !studentId) {
-      setStudentId(students[0].id);
+      setUniversity('');
+      setCourse('');
+      setIntake('Fall 2026');
+      setStatus('New Enquiry');
+      setNotes('');
     }
-  }, [preselectedStudentId, students, studentId]);
+  }, [isOpen, preselectedStudentId, students, selectedYearFilter]);
 
-  // Selected country universities
+  const handleStudentChange = (nextId: string) => {
+    setStudentId(nextId);
+    const matched = students.find(s => s.id === nextId);
+    if (matched) {
+      if (matched.countryOfInterest) setCountryCode(matched.countryOfInterest);
+      if (matched.intakeYear) setIntakeYear(matched.intakeYear);
+    }
+  };
+
+  // Selected country universities & stages
   const selectedCountry = countries.find(c => c.code === countryCode);
   const universitiesList = selectedCountry?.settings?.universities || [];
+  const stageOptions = selectedCountry?.settings?.applicationStages?.length
+    ? selectedCountry.settings.applicationStages
+    : DEFAULT_STATUSES;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -67,10 +122,11 @@ export const ApplicationFormModal: React.FC<ApplicationFormModalProps> = ({
         countryId: selectedCountry?.id || `country_${countryCode}`,
         countryCode,
         countryName: selectedCountry?.name || countryCode,
+        intakeYear: intakeYear || String(new Date().getFullYear()),
         university: university.trim(),
         course: course.trim(),
-        intake: intake.trim() || 'Fall 2026',
-        status: status || 'New Enquiry',
+        intake: intake.trim() || `Fall ${intakeYear}`,
+        status: (status || 'New Enquiry') as ApplicationStatus,
         notes: notes.trim() || '',
       };
 
@@ -103,20 +159,33 @@ export const ApplicationFormModal: React.FC<ApplicationFormModalProps> = ({
       }
     >
       <form onSubmit={handleSubmit} className="space-y-4">
-        {/* Student Selection */}
-        <Select
-          label="Select Candidate *"
-          value={studentId}
-          onChange={(e) => setStudentId(e.target.value)}
-          required
-          options={[
-            { value: '', label: '-- Select Student --' },
-            ...students.map(s => ({
-              value: s.id,
-              label: `${s.fullName} (${s.email}) - Destination: ${s.countryOfInterest}`
-            }))
-          ]}
-        />
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="md:col-span-2">
+            <Select
+              label="Select Candidate *"
+              value={studentId}
+              onChange={(e) => handleStudentChange(e.target.value)}
+              required
+              options={[
+                { value: '', label: '-- Select Student --' },
+                ...students.map(s => ({
+                  value: s.id,
+                  label: `${s.fullName} (${s.countryOfInterest}${s.intakeYear ? ` • ${s.intakeYear}` : ''})`
+                }))
+              ]}
+            />
+          </div>
+
+          <CreatableSelect
+            label="Intake Year *"
+            categoryKey="intake_years"
+            value={intakeYear}
+            onChange={(val) => setIntakeYear(val)}
+            options={years}
+            placeholder="Select or add year..."
+            required
+          />
+        </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <Select
@@ -124,79 +193,51 @@ export const ApplicationFormModal: React.FC<ApplicationFormModalProps> = ({
             value={countryCode}
             onChange={(e) => {
               setCountryCode(e.target.value);
-              setUniversity(''); // reset university
+              setUniversity('');
             }}
             required
             options={countries.map(c => ({ value: c.code, label: `${c.flag} ${c.name}` }))}
           />
 
-          <div>
-            <label className="block text-xs font-semibold text-navy-900 uppercase tracking-wider mb-1.5">
-              University *
-            </label>
-            {universitiesList.length > 0 ? (
-              <div className="space-y-1.5">
-                <select
-                  value={university}
-                  onChange={(e) => setUniversity(e.target.value)}
-                  className="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-xs text-navy-950 focus:outline-none focus:ring-2 focus:ring-navy-600 bg-white"
-                >
-                  <option value="">-- Select from Partner Universities --</option>
-                  {universitiesList.map(u => (
-                    <option key={u} value={u}>{u}</option>
-                  ))}
-                  <option value="__other">Custom University...</option>
-                </select>
-                {university === '__other' && (
-                  <Input
-                    placeholder="Enter Custom University Name"
-                    onChange={(e) => setUniversity(e.target.value)}
-                    required
-                  />
-                )}
-              </div>
-            ) : (
-              <Input
-                placeholder="e.g. Sapienza Università di Roma"
-                value={university}
-                onChange={(e) => setUniversity(e.target.value)}
-                required
-              />
-            )}
-          </div>
+          <CreatableSelect
+            label="University *"
+            categoryKey={`universities_${countryCode}`}
+            value={university}
+            onChange={(val) => setUniversity(val)}
+            options={universitiesList}
+            placeholder="Tap to pick or type new university..."
+            required
+          />
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Input
+          <CreatableSelect
             label="Course / Degree Program *"
-            placeholder="e.g. Single-Cycle Medicine & Surgery (English)"
+            categoryKey="courses"
             value={course}
-            onChange={(e) => setCourse(e.target.value)}
+            onChange={(val) => setCourse(val)}
+            options={DEFAULT_COURSES}
+            placeholder="Select or type new course..."
             required
           />
 
-          <Input
+          <CreatableSelect
             label="Intake Session"
-            placeholder="e.g. Fall 2026"
+            categoryKey="intake_sessions"
             value={intake}
-            onChange={(e) => setIntake(e.target.value)}
+            onChange={(val) => setIntake(val)}
+            options={DEFAULT_SESSIONS}
+            placeholder="e.g. Fall 2026..."
           />
         </div>
 
-        <Select
-          label="Initial Application Status"
+        <CreatableSelect
+          label="Initial Application Stage"
+          categoryKey="application_statuses"
           value={status}
-          onChange={(e) => setStatus(e.target.value as ApplicationStatus)}
-          options={[
-            { value: 'New Enquiry', label: 'New Enquiry' },
-            { value: 'Profile Review', label: 'Profile Review' },
-            { value: 'Documents Pending', label: 'Documents Pending' },
-            { value: 'Application Preparation', label: 'Application Preparation' },
-            { value: 'Application Submitted', label: 'Application Submitted' },
-            { value: 'Awaiting University Response', label: 'Awaiting University Response' },
-            { value: 'Admission Received', label: 'Admission Received' },
-            { value: 'Visa Process', label: 'Visa Process' },
-          ]}
+          onChange={(val) => setStatus(val)}
+          options={stageOptions}
+          placeholder="Select or add stage..."
         />
 
         <div>
@@ -215,4 +256,3 @@ export const ApplicationFormModal: React.FC<ApplicationFormModalProps> = ({
     </Modal>
   );
 };
-

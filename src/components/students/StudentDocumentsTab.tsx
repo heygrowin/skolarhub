@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Student, DocumentRecord, DocumentCategory } from '../../types';
 import { Button } from '../common/Button';
 import { Badge } from '../common/Badge';
 import { EmptyState } from '../common/EmptyState';
+import { CreatableSelect } from '../common/CreatableSelect';
 import { FolderLock, Upload, Download, Trash2, Eye, FileText, CheckCircle, XCircle } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import { uploadDocumentFile } from '../../lib/storageService';
+import { uploadDocumentFile, getAccessibleDocumentUrl } from '../../lib/storageService';
 import { createDocumentRecord, deleteDocumentRecord, updateDocumentStatus } from '../../services/documentService';
 import { useToast } from '../../context/ToastContext';
 
@@ -16,6 +17,20 @@ interface StudentDocumentsTabProps {
   onPreviewDocument: (doc: DocumentRecord) => void;
 }
 
+const DEFAULT_DOC_CATEGORIES = [
+  'Passport',
+  'Academic Transcripts',
+  'NEET Scorecard',
+  'Language Certificate',
+  'CIMEA / DOV Statement',
+  'Universitaly Pre-Enrolment',
+  'Visa Dossier',
+  'Financial Document',
+  'University Offer Letter',
+  'CV/Resume',
+  'Other',
+];
+
 export const StudentDocumentsTab: React.FC<StudentDocumentsTabProps> = ({
   student,
   documents,
@@ -24,6 +39,8 @@ export const StudentDocumentsTab: React.FC<StudentDocumentsTabProps> = ({
 }) => {
   const { userProfile, hasPermission } = useAuth();
   const { success, error } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const [uploading, setUploading] = useState<boolean>(false);
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const [selectedCategory, setSelectedCategory] = useState<DocumentCategory>('Academic Transcripts');
@@ -48,6 +65,7 @@ export const StudentDocumentsTab: React.FC<StudentDocumentsTabProps> = ({
         studentId: student.id,
         studentName: student.fullName,
         countryCode: student.countryOfInterest,
+        intakeYear: student.intakeYear || new Date().getFullYear().toString(),
         category: selectedCategory,
         uploadedBy: userProfile?.uid || 'user',
         uploadedByName: userProfile?.displayName || 'Counsellor',
@@ -59,7 +77,7 @@ export const StudentDocumentsTab: React.FC<StudentDocumentsTabProps> = ({
         reviewStatus: 'Pending',
       });
 
-      success('File Uploaded', `${file.name} saved securely in cloud storage.`);
+      success('File Uploaded', `${file.name} uploaded and archived.`);
       onRefresh();
     } catch (err: any) {
       error('Upload Failed', err?.message || 'Failed to upload document');
@@ -73,7 +91,7 @@ export const StudentDocumentsTab: React.FC<StudentDocumentsTabProps> = ({
   const handleDelete = async (docRecord: DocumentRecord) => {
     if (!window.confirm(`Are you sure you want to delete ${docRecord.name}?`)) return;
     try {
-      await deleteDocumentRecord(docRecord.id, docRecord.storagePath);
+      await deleteDocumentRecord(docRecord.id, docRecord.storagePath, docRecord.fileUrl);
       success('Document Deleted', 'Record and file removed.');
       onRefresh();
     } catch (err: any) {
@@ -101,40 +119,35 @@ export const StudentDocumentsTab: React.FC<StudentDocumentsTabProps> = ({
         </div>
 
         {canUpload && (
-          <div className="flex items-center gap-2">
-            <select
-              value={selectedCategory}
-              onChange={(e) => setSelectedCategory(e.target.value as any)}
-              className="text-xs rounded-xl border border-slate-300 bg-white px-2.5 py-2 font-medium text-navy-950 focus:outline-none"
-            >
-              <option value="Passport">Passport</option>
-              <option value="Academic Transcripts">Academic Transcripts</option>
-              <option value="Language Certificate">Language Certificate</option>
-              <option value="Visa">Visa Dossier</option>
-              <option value="Financial Document">Financial Document</option>
-              <option value="University Offer Letter">Offer Letter</option>
-              <option value="Other">Other Document</option>
-            </select>
-
-            <label className="cursor-pointer">
-              <input
-                type="file"
-                className="hidden"
-                accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx"
-                onChange={handleFileUpload}
-                disabled={uploading}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="w-56">
+              <CreatableSelect
+                categoryKey="document_categories"
+                value={selectedCategory}
+                onChange={(val) => setSelectedCategory(val)}
+                options={DEFAULT_DOC_CATEGORIES}
+                placeholder="Category..."
               />
-              <Button
-                variant="gold"
-                size="sm"
-                loading={uploading}
-                icon={<Upload className="w-4 h-4" />}
-                type="button"
-                onClick={() => {}}
-              >
-                {uploading ? `Uploading ${uploadProgress}%` : 'Upload File'}
-              </Button>
-            </label>
+            </div>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx,.txt"
+              onChange={handleFileUpload}
+              disabled={uploading}
+            />
+            <Button
+              variant="gold"
+              size="sm"
+              loading={uploading}
+              icon={<Upload className="w-4 h-4" />}
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              {uploading ? `Uploading ${uploadProgress}%` : 'Upload File'}
+            </Button>
           </div>
         )}
       </div>
@@ -203,7 +216,7 @@ export const StudentDocumentsTab: React.FC<StudentDocumentsTabProps> = ({
                 </button>
 
                 <a
-                  href={doc.fileUrl}
+                  href={getAccessibleDocumentUrl(doc.fileUrl, true)}
                   target="_blank"
                   rel="noreferrer"
                   download={doc.name}
@@ -230,4 +243,3 @@ export const StudentDocumentsTab: React.FC<StudentDocumentsTabProps> = ({
     </div>
   );
 };
-

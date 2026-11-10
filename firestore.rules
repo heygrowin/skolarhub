@@ -63,10 +63,14 @@ service cloud.firestore {
       allow write: if hasPermission('country.manage') || isSuperAdmin();
     }
 
-    // CUSTOM FIELD DEFINITIONS
+    // CUSTOM FIELD DEFINITIONS & SAVED DROPDOWN OPTIONS
     match /customFieldDefinitions/{fieldId} {
       allow read: if isAuthenticated();
       allow write: if hasPermission('settings.manage') || isSuperAdmin();
+    }
+
+    match /customOptions/{optionId} {
+      allow read, write: if isAuthenticated();
     }
 
     // STUDENTS

@@ -1,6 +1,5 @@
 import { 
   collection, 
-  getDocs, 
   doc, 
   DocumentSnapshot
 } from "firebase/firestore";
@@ -8,14 +7,11 @@ import { db } from "../lib/firebase";
 import { Student, AcquisitionType } from "../types";
 import { 
   cleanFirestoreData, 
-  getLocalCache, 
-  setLocalCache, 
-  addToLocalCache, 
-  updateInLocalCache, 
-  removeFromLocalCache,
-  syncDocToFirestore,
-  syncDocDeleteFromFirestore,
-  withTimeout
+  fetchCollectionSynced,
+  getLocalCache,
+  writeDocSynced,
+  updateDocSynced,
+  deleteDocSynced
 } from "../lib/firestoreUtils";
 
 const COLLECTION_NAME = "students";
@@ -23,11 +19,13 @@ const COLLECTION_NAME = "students";
 export interface StudentFilterOptions {
   searchQuery?: string;
   country?: string;
+  intakeYear?: string;
   acquisitionType?: AcquisitionType | 'ALL';
   partnerId?: string;
   assignedCounsellorId?: string;
   pageSize?: number;
   lastDoc?: DocumentSnapshot;
+  forceRefresh?: boolean;
 }
 
 export async function getStudents(options: StudentFilterOptions = {}): Promise<{
@@ -36,25 +34,9 @@ export async function getStudents(options: StudentFilterOptions = {}): Promise<{
   totalCount: number;
 }> {
   try {
-    let allStudents: Student[] = [];
-
-    // 1. Try fast local store first (0ms latency)
-    const cached = getLocalCache<Student>(COLLECTION_NAME);
-    if (cached !== null) {
-      allStudents = [...cached];
-    } else {
-      // 2. Fetch from Firestore with fast timeout (never block longer than 1200ms)
-      try {
-        const colRef = collection(db, COLLECTION_NAME);
-        const snapshot = await withTimeout(getDocs(colRef), 1200);
-        allStudents = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Student));
-        setLocalCache(COLLECTION_NAME, allStudents);
-      } catch (e) {
-        console.debug("Firestore fetch students fallback to local store:", e);
-        allStudents = [];
-        setLocalCache(COLLECTION_NAME, allStudents);
-      }
-    }
+    let allStudents = await fetchCollectionSynced<Student>(COLLECTION_NAME, {
+      forceRemote: options.forceRefresh,
+    });
 
     // Fast in-memory sort by createdAt DESC
     allStudents.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
@@ -62,6 +44,14 @@ export async function getStudents(options: StudentFilterOptions = {}): Promise<{
     // Apply country filter
     if (options.country && options.country !== 'ALL') {
       allStudents = allStudents.filter(s => s.countryOfInterest === options.country);
+    }
+
+    // Apply intakeYear filter
+    if (options.intakeYear && options.intakeYear !== 'ALL') {
+      allStudents = allStudents.filter(s => {
+        const yr = s.intakeYear || (s.registrationDate ? new Date(s.registrationDate).getFullYear().toString() : '2025');
+        return yr === options.intakeYear;
+      });
     }
 
     // Apply acquisition type filter
@@ -74,7 +64,7 @@ export async function getStudents(options: StudentFilterOptions = {}): Promise<{
       allStudents = allStudents.filter(s => s.partnerId === options.partnerId);
     }
 
-    // Client-side text search (full name, email, phone, passport, school)
+    // Client-side text search (full name, email, phone, passport, school, year)
     if (options.searchQuery && options.searchQuery.trim() !== '') {
       const term = options.searchQuery.toLowerCase().trim();
       allStudents = allStudents.filter(s => 
@@ -82,13 +72,13 @@ export async function getStudents(options: StudentFilterOptions = {}): Promise<{
         (s.email && s.email.toLowerCase().includes(term)) ||
         (s.phone && s.phone.toLowerCase().includes(term)) ||
         (s.passportNumber && s.passportNumber.toLowerCase().includes(term)) ||
-        (s.schoolOrUniversity && s.schoolOrUniversity.toLowerCase().includes(term))
+        (s.schoolOrUniversity && s.schoolOrUniversity.toLowerCase().includes(term)) ||
+        (s.intakeYear && s.intakeYear.toLowerCase().includes(term))
       );
     }
 
     const totalCount = allStudents.length;
 
-    // Optional pagination slicing
     if (options.pageSize) {
       allStudents = allStudents.slice(0, options.pageSize);
     }
@@ -110,7 +100,8 @@ export async function getStudentById(id: string): Promise<Student | null> {
     const found = cached.find(s => s.id === id);
     if (found) return found;
   }
-  return null;
+  const all = await fetchCollectionSynced<Student>(COLLECTION_NAME);
+  return all.find(s => s.id === id) || null;
 }
 
 export async function createStudent(studentData: Omit<Student, 'id' | 'createdAt' | 'updatedAt'>): Promise<Student> {
@@ -120,21 +111,14 @@ export async function createStudent(studentData: Omit<Student, 'id' | 'createdAt
 
   const newStudent: Student = {
     ...studentData,
+    intakeYear: studentData.intakeYear || new Date().getFullYear().toString(),
     id: docRef.id,
     createdAt: now,
     updatedAt: now,
   };
 
-  // Clean undefined values to prevent Firestore crashes
   const cleanedStudent = cleanFirestoreData(newStudent);
-
-  // 1. Optimistically update local store immediately (< 1ms)
-  addToLocalCache(COLLECTION_NAME, cleanedStudent);
-
-  // 2. Non-blocking cloud sync in background
-  syncDocToFirestore(COLLECTION_NAME, docRef.id, cleanedStudent);
-
-  return cleanedStudent;
+  return await writeDocSynced(COLLECTION_NAME, docRef.id, cleanedStudent);
 }
 
 export async function updateStudent(id: string, updates: Partial<Student>): Promise<void> {
@@ -144,17 +128,9 @@ export async function updateStudent(id: string, updates: Partial<Student>): Prom
     updatedAt: now,
   });
 
-  // 1. Optimistically update local store immediately
-  updateInLocalCache(COLLECTION_NAME, id, cleanedUpdates);
-
-  // 2. Non-blocking cloud sync in background
-  syncDocToFirestore(COLLECTION_NAME, id, cleanedUpdates);
+  await updateDocSynced(COLLECTION_NAME, id, cleanedUpdates);
 }
 
 export async function deleteStudent(id: string): Promise<void> {
-  // 1. Optimistically remove from local store immediately
-  removeFromLocalCache(COLLECTION_NAME, id);
-
-  // 2. Non-blocking cloud delete in background
-  syncDocDeleteFromFirestore(COLLECTION_NAME, id);
+  await deleteDocSynced(COLLECTION_NAME, id);
 }

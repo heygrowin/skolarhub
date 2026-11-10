@@ -83,11 +83,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div>
         <div className="flex items-center gap-3 px-6 py-5 border-b border-navy-800">
           <img
-            src="/logo-white.png"
+            src="/logo-black.png"
             alt="SKOLAR"
-            className="h-7 w-auto object-contain"
+            className="h-9 w-9 rounded-xl object-cover ring-1 ring-gold-400/30 bg-[#161515]"
             onError={(e) => {
-              // Fallback text if logo fails
               (e.target as HTMLElement).style.display = 'none';
             }}
           />

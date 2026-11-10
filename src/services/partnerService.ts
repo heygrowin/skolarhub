@@ -1,20 +1,16 @@
 import { 
   collection, 
-  getDocs, 
   doc
 } from "firebase/firestore";
 import { db } from "../lib/firebase";
-import { Partner, Student, Application, Expense, Invoice, PartnerMetrics } from "../types";
+import { Partner, Student, PartnerMetrics } from "../types";
 import { 
   cleanFirestoreData, 
-  getLocalCache, 
-  setLocalCache, 
-  addToLocalCache, 
-  updateInLocalCache, 
-  removeFromLocalCache,
-  syncDocToFirestore,
-  syncDocDeleteFromFirestore,
-  withTimeout
+  fetchCollectionSynced,
+  getLocalCache,
+  writeDocSynced,
+  updateDocSynced,
+  deleteDocSynced
 } from "../lib/firestoreUtils";
 import { getStudents } from "./studentService";
 import { getApplications } from "./applicationService";
@@ -24,31 +20,14 @@ export type { PartnerMetrics };
 
 const COLLECTION_NAME = "partners";
 
-export async function getPartners(): Promise<Partner[]> {
+export async function getPartners(forceRefresh: boolean = false): Promise<Partner[]> {
   try {
-    let allPartners: Partner[] = [];
-    const cached = getLocalCache<Partner>(COLLECTION_NAME);
-    if (cached !== null) {
-      allPartners = [...cached];
-    } else {
-      try {
-        const colRef = collection(db, COLLECTION_NAME);
-        const snapshot = await withTimeout(getDocs(colRef), 1200);
-        allPartners = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Partner));
-        setLocalCache(COLLECTION_NAME, allPartners);
-      } catch (e) {
-        console.debug("Firestore fetch partners fallback to local store:", e);
-        allPartners = [];
-        setLocalCache(COLLECTION_NAME, allPartners);
-      }
-    }
-
+    const allPartners = await fetchCollectionSynced<Partner>(COLLECTION_NAME, { forceRemote: forceRefresh });
     allPartners.sort((a, b) => a.name.localeCompare(b.name));
     return allPartners;
   } catch (error) {
     console.error("Error in getPartners:", error);
-    const cached = getLocalCache<Partner>(COLLECTION_NAME) || [];
-    return cached;
+    return getLocalCache<Partner>(COLLECTION_NAME) || [];
   }
 }
 
@@ -58,7 +37,8 @@ export async function getPartnerById(id: string): Promise<Partner | null> {
     const found = cached.find(p => p.id === id);
     if (found) return found;
   }
-  return null;
+  const all = await fetchCollectionSynced<Partner>(COLLECTION_NAME);
+  return all.find(p => p.id === id) || null;
 }
 
 export async function createPartner(partnerData: Omit<Partner, 'id' | 'createdAt' | 'updatedAt'>): Promise<Partner> {
@@ -74,14 +54,7 @@ export async function createPartner(partnerData: Omit<Partner, 'id' | 'createdAt
   };
 
   const cleaned = cleanFirestoreData(newPartner);
-
-  // 1. Optimistic local store update (< 1ms)
-  addToLocalCache(COLLECTION_NAME, cleaned);
-
-  // 2. Non-blocking cloud sync in background
-  syncDocToFirestore(COLLECTION_NAME, docRef.id, cleaned);
-
-  return cleaned;
+  return await writeDocSynced(COLLECTION_NAME, docRef.id, cleaned);
 }
 
 export async function updatePartner(id: string, updates: Partial<Partner>): Promise<void> {
@@ -91,13 +64,11 @@ export async function updatePartner(id: string, updates: Partial<Partner>): Prom
     updatedAt: now,
   });
 
-  updateInLocalCache(COLLECTION_NAME, id, cleaned);
-  syncDocToFirestore(COLLECTION_NAME, id, cleaned);
+  await updateDocSynced(COLLECTION_NAME, id, cleaned);
 }
 
 export async function deletePartner(id: string): Promise<void> {
-  removeFromLocalCache(COLLECTION_NAME, id);
-  syncDocDeleteFromFirestore(COLLECTION_NAME, id);
+  await deleteDocSynced(COLLECTION_NAME, id);
 }
 
 export async function calculatePartnerMetrics(partnerId: string, partnerObj?: Partner): Promise<PartnerMetrics> {
@@ -112,18 +83,15 @@ export async function calculatePartnerMetrics(partnerId: string, partnerObj?: Pa
     const referredStudents = allStudentsRes.students;
     const studentIds = new Set(referredStudents.map(s => s.id));
 
-    // Active applications
     const partnerApps = allApps.filter(a => studentIds.has(a.studentId));
     const activeApplications = partnerApps.filter(a => 
       !['Completed', 'Rejected', 'Withdrawn'].includes(a.status)
     ).length;
 
-    // Converted
     const convertedStudents = partnerApps.filter(a => 
       ['Admission Received', 'Visa Process', 'Completed'].includes(a.status)
     ).length;
 
-    // Associated revenue
     const partnerInvoices = allInvoices.filter(i => studentIds.has(i.studentId));
     const associatedRevenue: Record<string, number> = {};
     partnerInvoices.forEach(inv => {
@@ -131,7 +99,6 @@ export async function calculatePartnerMetrics(partnerId: string, partnerObj?: Pa
       associatedRevenue[curr] = (associatedRevenue[curr] || 0) + (inv.paidAmount || 0);
     });
 
-    // Commission calculations
     const partnerExpenses = allExpenses.filter(e => 
       e.partnerId === partnerId && e.category === 'Partner Commission'
     );
@@ -141,7 +108,6 @@ export async function calculatePartnerMetrics(partnerId: string, partnerObj?: Pa
       commissionPaid[exp.currency] = (commissionPaid[exp.currency] || 0) + exp.amount;
     });
 
-    // Partner info for commission calculation
     const partner = partnerObj || await getPartnerById(partnerId);
     const commissionOwed: Record<string, number> = {};
 

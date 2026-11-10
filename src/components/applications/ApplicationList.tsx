@@ -3,6 +3,7 @@ import { Application, ApplicationStatus, Student } from '../../types';
 import { getApplications, updateApplicationStatus, createApplication, deleteApplication } from '../../services/applicationService';
 import { getStudents } from '../../services/studentService';
 import { useCountry } from '../../context/CountryContext';
+import { useYear } from '../../context/YearContext';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { Button } from '../common/Button';
@@ -24,6 +25,7 @@ import {
 
 export const ApplicationList: React.FC = () => {
   const { countries, selectedCountryFilter, setSelectedCountryFilter } = useCountry();
+  const { selectedYearFilter } = useYear();
   const { userProfile, hasPermission } = useAuth();
   const { success, error } = useToast();
 
@@ -53,15 +55,17 @@ export const ApplicationList: React.FC = () => {
     'Withdrawn',
   ];
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (forceRefresh: boolean = false) => {
     setLoading(true);
     try {
       const [apps, studentRes] = await Promise.all([
         getApplications({
           countryCode: selectedCountryFilter !== 'ALL' ? selectedCountryFilter : undefined,
+          intakeYear: selectedYearFilter !== 'ALL' ? selectedYearFilter : undefined,
           status: statusFilter !== 'ALL' ? statusFilter : undefined,
+          forceRefresh,
         }),
-        getStudents(),
+        getStudents({ forceRefresh }),
       ]);
 
       setApplications(apps);
@@ -71,10 +75,10 @@ export const ApplicationList: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [selectedCountryFilter, statusFilter, error]);
+  }, [selectedCountryFilter, selectedYearFilter, statusFilter, error]);
 
   useEffect(() => {
-    loadData();
+    loadData(false);
   }, [loadData]);
 
   const handleCreateApplication = async (appData: any) => {
@@ -147,7 +151,7 @@ export const ApplicationList: React.FC = () => {
           <Button
             variant="secondary"
             size="sm"
-            onClick={loadData}
+            onClick={() => loadData(true)}
             loading={loading}
             icon={<RefreshCw className="w-3.5 h-3.5" />}
           >
@@ -236,6 +240,9 @@ export const ApplicationList: React.FC = () => {
                     <div className="flex flex-wrap items-center gap-2">
                       <h4 className="text-sm font-bold text-navy-950">{app.university}</h4>
                       <Badge variant="navy" size="sm">{app.countryName}</Badge>
+                      {app.intakeYear && (
+                        <Badge variant="gold" size="sm">{app.intakeYear}</Badge>
+                      )}
                       {app.isDemo && (
                         <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">
                           DEMO

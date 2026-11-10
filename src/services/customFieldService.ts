@@ -1,20 +1,16 @@
 import { 
   collection, 
-  getDocs, 
   doc
 } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { CustomFieldDefinition } from "../types";
 import { 
   cleanFirestoreData, 
-  getLocalCache, 
-  setLocalCache, 
-  addToLocalCache, 
-  updateInLocalCache,
-  removeFromLocalCache,
-  syncDocToFirestore,
-  syncDocDeleteFromFirestore,
-  withTimeout
+  fetchCollectionSynced,
+  getLocalCache,
+  writeDocSynced,
+  updateDocSynced,
+  deleteDocSynced
 } from "../lib/firestoreUtils";
 
 const COLLECTION_NAME = "customFieldDefinitions";
@@ -112,25 +108,14 @@ export const DEFAULT_CUSTOM_FIELDS: CustomFieldDefinition[] = [
 
 export async function getCustomFields(countryCode?: string): Promise<CustomFieldDefinition[]> {
   try {
-    let allFields: CustomFieldDefinition[] = [];
-    const cached = getLocalCache<CustomFieldDefinition>(COLLECTION_NAME);
-    if (cached !== null && cached.length > 0) {
-      allFields = [...cached];
-    } else {
-      try {
-        const colRef = collection(db, COLLECTION_NAME);
-        const snapshot = await withTimeout(getDocs(colRef), 1200);
-        if (!snapshot.empty) {
-          allFields = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as CustomFieldDefinition));
-        } else {
-          allFields = [...DEFAULT_CUSTOM_FIELDS];
-        }
-        setLocalCache(COLLECTION_NAME, allFields);
-      } catch (e) {
-        allFields = [...DEFAULT_CUSTOM_FIELDS];
-        setLocalCache(COLLECTION_NAME, allFields);
-      }
-    }
+    const rawDocs = await fetchCollectionSynced<any>(COLLECTION_NAME, {
+      seedIfRemoteEmpty: DEFAULT_CUSTOM_FIELDS,
+    });
+
+    // Exclude internal dropdown option groups stored alongside field definitions
+    const allFields: CustomFieldDefinition[] = rawDocs.filter(
+      (f) => f && !f.isOptionGroup && !String(f.id || '').startsWith('optgroup_') && f.fieldName
+    );
 
     allFields.sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
 
@@ -141,8 +126,11 @@ export async function getCustomFields(countryCode?: string): Promise<CustomField
     return allFields;
   } catch (error) {
     console.error("Error in getCustomFields:", error);
-    const cached = getLocalCache<CustomFieldDefinition>(COLLECTION_NAME);
-    return cached && cached.length > 0 ? cached : DEFAULT_CUSTOM_FIELDS;
+    const cached = getLocalCache<any>(COLLECTION_NAME) || [];
+    const filtered = cached.filter(
+      (f) => f && !f.isOptionGroup && !String(f.id || '').startsWith('optgroup_') && f.fieldName
+    );
+    return filtered.length > 0 ? filtered : DEFAULT_CUSTOM_FIELDS;
   }
 }
 
@@ -161,11 +149,7 @@ export async function createCustomField(
   };
 
   const cleaned = cleanFirestoreData(newField);
-
-  addToLocalCache(COLLECTION_NAME, cleaned);
-  syncDocToFirestore(COLLECTION_NAME, docRef.id, cleaned);
-
-  return cleaned;
+  return await writeDocSynced(COLLECTION_NAME, docRef.id, cleaned);
 }
 
 export async function updateCustomField(
@@ -178,11 +162,9 @@ export async function updateCustomField(
     updatedAt: now,
   });
 
-  updateInLocalCache(COLLECTION_NAME, id, cleaned);
-  syncDocToFirestore(COLLECTION_NAME, id, cleaned);
+  await updateDocSynced(COLLECTION_NAME, id, cleaned);
 }
 
 export async function deleteCustomField(id: string): Promise<void> {
-  removeFromLocalCache(COLLECTION_NAME, id);
-  syncDocDeleteFromFirestore(COLLECTION_NAME, id);
+  await deleteDocSynced(COLLECTION_NAME, id);
 }

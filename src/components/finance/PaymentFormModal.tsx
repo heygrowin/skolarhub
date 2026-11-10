@@ -3,17 +3,33 @@ import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { Input } from '../common/Input';
 import { Select } from '../common/Select';
-import { Student, Invoice, Currency, PaymentMethod } from '../../types';
+import { CreatableSelect } from '../common/CreatableSelect';
+import { Student, Invoice, Currency, Payment } from '../../types';
+import { useYear } from '../../context/YearContext';
 import { useToast } from '../../context/ToastContext';
 
 interface PaymentFormModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (paymentData: any) => Promise<void>;
+  onSubmit: (paymentData: any, paymentId?: string) => Promise<void>;
   students: Student[];
   invoices: Invoice[];
   preselectedStudentId?: string;
+  initialPayment?: Payment | null;
 }
+
+const DEFAULT_PAYMENT_METHODS = [
+  'UPI',
+  'UPI - Google Pay',
+  'UPI - PhonePe',
+  'UPI - Paytm',
+  'UPI - Office',
+  'Bank Transfer',
+  'Cash',
+  'Credit Card',
+  'SWIFT Wire',
+  'Cheque / DD',
+];
 
 export const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
   isOpen,
@@ -22,49 +38,85 @@ export const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
   students,
   invoices,
   preselectedStudentId,
+  initialPayment,
 }) => {
+  const { years, selectedYearFilter } = useYear();
   const { error: toastError } = useToast();
   const [loading, setLoading] = useState(false);
 
   const [studentId, setStudentId] = useState('');
   const [invoiceId, setInvoiceId] = useState('');
+  const [intakeYear, setIntakeYear] = useState('2026');
   const [amount, setAmount] = useState<number>(500);
   const [currency, setCurrency] = useState<Currency>('EUR');
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('Bank Transfer');
+  const [paymentMethod, setPaymentMethod] = useState<string>('UPI');
   const [transactionReference, setTransactionReference] = useState('');
   const [notes, setNotes] = useState('');
 
+  const isEditMode = !!initialPayment;
+
   useEffect(() => {
     if (isOpen) {
-      const targetStudent = preselectedStudentId || (students[0]?.id || '');
-      setStudentId(targetStudent);
-      setPaymentDate(new Date().toISOString().split('T')[0]);
-      setAmount(500);
-      setTransactionReference('');
-      setNotes('');
+      if (initialPayment) {
+        setStudentId(initialPayment.studentId || '');
+        setInvoiceId(initialPayment.invoiceId || '');
+        setIntakeYear(
+          initialPayment.intakeYear || (selectedYearFilter !== 'ALL' ? selectedYearFilter : String(new Date().getFullYear()))
+        );
+        setAmount(initialPayment.amount || 0);
+        setCurrency(initialPayment.currency || 'EUR');
+        setPaymentDate(initialPayment.paymentDate || new Date().toISOString().split('T')[0]);
+        setPaymentMethod(initialPayment.paymentMethod || 'UPI');
+        setTransactionReference(initialPayment.transactionReference || '');
+        setNotes(initialPayment.notes || '');
+      } else {
+        const targetStudentId = preselectedStudentId || (students[0]?.id || '');
+        const matched = students.find(s => s.id === targetStudentId);
+        setStudentId(targetStudentId);
+        setInvoiceId('');
+        setIntakeYear(
+          matched?.intakeYear || (selectedYearFilter !== 'ALL' ? selectedYearFilter : String(new Date().getFullYear()))
+        );
+        setPaymentDate(new Date().toISOString().split('T')[0]);
+        setAmount(500);
+        setCurrency('EUR');
+        setPaymentMethod('UPI');
+        setTransactionReference('');
+        setNotes('');
+      }
     }
-  }, [isOpen, preselectedStudentId, students]);
+  }, [isOpen, initialPayment, preselectedStudentId, students, selectedYearFilter]);
+
+  const handleStudentChange = (nextId: string) => {
+    setStudentId(nextId);
+    if (!isEditMode) setInvoiceId('');
+    const matched = students.find(s => s.id === nextId);
+    if (matched?.intakeYear) setIntakeYear(matched.intakeYear);
+  };
 
   // Filter invoices for selected student
-  const studentInvoices = invoices.filter(i => i.studentId === studentId && i.status !== 'paid');
+  const studentInvoices = invoices.filter(
+    i => i.studentId === studentId && (i.status !== 'paid' || i.id === invoiceId)
+  );
 
-  // Auto-fill currency and amount when an invoice is selected
+  // Auto-fill currency and amount when an invoice is selected in create mode
   useEffect(() => {
-    if (invoiceId) {
+    if (!isEditMode && invoiceId) {
       const inv = invoices.find(i => i.id === invoiceId);
       if (inv) {
         setCurrency(inv.currency);
+        if (inv.intakeYear) setIntakeYear(inv.intakeYear);
         const remaining = Math.max(0, inv.amount - (inv.paidAmount || 0));
         setAmount(remaining);
       }
     }
-  }, [invoiceId, invoices]);
+  }, [invoiceId, invoices, isEditMode]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!studentId || amount <= 0) {
-      toastError('Validation', 'Please select a candidate and valid amount.');
+      toastError('Validation', 'Please select a candidate and enter a valid amount.');
       return;
     }
 
@@ -75,25 +127,29 @@ export const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
 
       const payload: any = {
         studentId,
-        studentName: selectedStudent?.fullName || 'Student',
+        studentName: selectedStudent?.fullName || initialPayment?.studentName || 'Student',
+        intakeYear: intakeYear || String(new Date().getFullYear()),
         amount: Number(amount),
         currency,
         paymentDate,
-        paymentMethod,
-        transactionReference: transactionReference.trim() || 'Direct Wire',
+        paymentMethod: paymentMethod || 'UPI',
+        transactionReference: transactionReference.trim() || 'Direct Transfer',
         notes: notes.trim() || '',
       };
 
       if (invoiceId) {
         payload.invoiceId = invoiceId;
-        payload.invoiceNumber = selectedInvoice?.invoiceNumber || '';
+        payload.invoiceNumber = selectedInvoice?.invoiceNumber || initialPayment?.invoiceNumber || '';
+      } else {
+        payload.invoiceId = '';
+        payload.invoiceNumber = '';
       }
 
-      await onSubmit(payload);
+      await onSubmit(payload, initialPayment?.id);
       onClose();
     } catch (err: any) {
       console.error("PaymentFormModal error:", err);
-      toastError('Save Error', err?.message || 'Failed to record payment');
+      toastError('Save Error', err?.message || 'Failed to save payment');
     } finally {
       setLoading(false);
     }
@@ -103,8 +159,12 @@ export const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Record Received Payment"
-      subtitle="Log incoming tuition, processing or consultancy remittance"
+      title={isEditMode ? "Edit Payment Record" : "Record Received Payment"}
+      subtitle={
+        isEditMode
+          ? `Editing transaction ${initialPayment?.transactionReference || initialPayment?.id}`
+          : "Log incoming tuition, processing or consultancy remittance"
+      }
       size="md"
       footer={
         <>
@@ -112,28 +172,38 @@ export const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
             Cancel
           </Button>
           <Button variant="gold" onClick={handleSubmit} loading={loading}>
-            Confirm Payment ({currency} {amount.toLocaleString()})
+            {isEditMode ? "Save Changes" : `Confirm Payment (${currency} ${amount.toLocaleString()})`}
           </Button>
         </>
       }
     >
       <form onSubmit={handleSubmit} className="space-y-4">
-        <Select
-          label="Candidate *"
-          value={studentId}
-          onChange={(e) => {
-            setStudentId(e.target.value);
-            setInvoiceId('');
-          }}
-          required
-          options={[
-            { value: '', label: '-- Select Candidate --' },
-            ...students.map(s => ({
-              value: s.id,
-              label: `${s.fullName} (${s.email})`
-            }))
-          ]}
-        />
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="sm:col-span-2">
+            <Select
+              label="Candidate *"
+              value={studentId}
+              onChange={(e) => handleStudentChange(e.target.value)}
+              required
+              options={[
+                { value: '', label: '-- Select Candidate --' },
+                ...students.map(s => ({
+                  value: s.id,
+                  label: `${s.fullName} (${s.countryOfInterest}${s.intakeYear ? ` • ${s.intakeYear}` : ''})`
+                }))
+              ]}
+            />
+          </div>
+
+          <CreatableSelect
+            label="Intake Year *"
+            categoryKey="intake_years"
+            value={intakeYear}
+            onChange={(val) => setIntakeYear(val)}
+            options={years}
+            placeholder="Year..."
+          />
+        </div>
 
         {studentInvoices.length > 0 && (
           <Select
@@ -144,7 +214,7 @@ export const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
               { value: '', label: '-- Unallocated / General Advance --' },
               ...studentInvoices.map(inv => ({
                 value: inv.id,
-                label: `${inv.invoiceNumber} (Total: ${inv.currency} ${inv.amount} • Due: ${inv.currency} ${inv.amount - (inv.paidAmount || 0)})`
+                label: `${inv.invoiceNumber} (Total: ${inv.currency} ${inv.amount} • Due: ${inv.currency} ${Math.max(0, inv.amount - (inv.paidAmount || 0))})`
               }))
             ]}
           />
@@ -172,17 +242,16 @@ export const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <Select
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <CreatableSelect
             label="Payment Method *"
+            categoryKey="payment_methods"
             value={paymentMethod}
-            onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}
-            options={[
-              { value: 'Bank Transfer', label: 'Bank Transfer (SEPA / Wire)' },
-              { value: 'Credit Card', label: 'Credit / Debit Card' },
-              { value: 'UPI/Other', label: 'UPI / Online Portal' },
-              { value: 'Cash', label: 'Cash Receipt' },
-            ]}
+            onChange={(val) => setPaymentMethod(val)}
+            options={DEFAULT_PAYMENT_METHODS}
+            placeholder="Select or type (e.g. UPI - Ansh)..."
+            required
+            helperText="Tap to pick or type new (e.g. UPI - Name)"
           />
 
           <Input
@@ -195,8 +264,8 @@ export const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
         </div>
 
         <Input
-          label="Bank Transaction ID / Reference *"
-          placeholder="e.g. SEPA-98214 or SWIFT-EUR-102"
+          label="Bank Transaction ID / UTR / Reference *"
+          placeholder="e.g. UPI-43219847 or SWIFT-EUR-102"
           value={transactionReference}
           onChange={(e) => setTransactionReference(e.target.value)}
           required
@@ -210,7 +279,7 @@ export const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
             rows={2}
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
-            placeholder="Payer account holder name, bank branch, installment notes..."
+            placeholder="Payer account holder name, UPI handle, installment note..."
             className="w-full rounded-xl border border-slate-300 p-2.5 text-xs text-navy-950 focus:border-navy-600 focus:outline-none"
           />
         </div>
@@ -218,4 +287,3 @@ export const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
     </Modal>
   );
 };
-

@@ -7,6 +7,7 @@ import { Download, ExternalLink, FileText, CheckCircle, XCircle } from 'lucide-r
 import { useAuth } from '../../context/AuthContext';
 import { updateDocumentStatus } from '../../services/documentService';
 import { useToast } from '../../context/ToastContext';
+import { getAccessibleDocumentUrl } from '../../lib/storageService';
 
 interface DocumentPreviewModalProps {
   isOpen: boolean;
@@ -29,6 +30,8 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
   const canReview = hasPermission('document.review');
   const isImage = document.fileType?.startsWith('image/') || /\.(jpg|jpeg|png|webp)$/i.test(document.name);
   const isPdf = document.fileType === 'application/pdf' || /\.pdf$/i.test(document.name);
+  const viewUrl = getAccessibleDocumentUrl(document.fileUrl, false);
+  const downloadUrl = getAccessibleDocumentUrl(document.fileUrl, true);
 
   const handleUpdateStatus = async (status: 'Approved' | 'Rejected') => {
     try {
@@ -72,7 +75,17 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
 
           <div className="flex items-center gap-2">
             <a
-              href={document.fileUrl}
+              href={downloadUrl}
+              target="_blank"
+              rel="noreferrer"
+              download={document.name}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-navy-950 bg-slate-100 hover:bg-slate-200 transition-colors"
+            >
+              <Download className="w-4 h-4" />
+              Download
+            </a>
+            <a
+              href={viewUrl}
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-navy-950 bg-slate-100 hover:bg-slate-200 transition-colors"
@@ -111,13 +124,13 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
         <div className="w-full min-h-[400px] max-h-[600px] flex items-center justify-center bg-slate-900/5 rounded-2xl border border-slate-200 overflow-hidden">
           {isImage ? (
             <img
-              src={document.fileUrl}
+              src={viewUrl}
               alt={document.name}
               className="max-h-[550px] max-w-full object-contain p-2"
             />
           ) : isPdf ? (
             <iframe
-              src={`${document.fileUrl}#toolbar=0`}
+              src={`${viewUrl}#toolbar=0`}
               title={document.name}
               className="w-full h-[550px] border-0"
             />
@@ -126,7 +139,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
               <FileText className="w-12 h-12 mx-auto text-slate-400" />
               <p className="text-xs font-medium">Direct preview not supported for this file type.</p>
               <a
-                href={document.fileUrl}
+                href={downloadUrl}
                 download={document.name}
                 className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-white bg-navy-900 hover:bg-navy-800"
               >

@@ -1,51 +1,34 @@
 import { 
   collection, 
-  getDocs, 
   doc
 } from "firebase/firestore";
 import { db } from "../lib/firebase";
-import { UserProfile, CustomRole, UserRole, PermissionKey, DEFAULT_ROLE_PERMISSIONS } from "../types";
+import { UserProfile, CustomRole, UserRole, DEFAULT_ROLE_PERMISSIONS } from "../types";
 import { logActivity } from "./auditService";
 import { 
   cleanFirestoreData, 
-  getLocalCache, 
-  setLocalCache, 
-  addToLocalCache, 
-  updateInLocalCache, 
-  removeFromLocalCache,
-  syncDocToFirestore,
-  syncDocDeleteFromFirestore,
-  withTimeout
+  fetchCollectionSynced,
+  getLocalCache,
+  writeDocSynced,
+  updateDocSynced,
+  deleteDocSynced
 } from "../lib/firestoreUtils";
 
 const USERS_COLLECTION = "users";
 const ROLES_COLLECTION = "roles";
 
-export async function getTeamMembers(): Promise<UserProfile[]> {
+export async function getTeamMembers(forceRefresh: boolean = false): Promise<UserProfile[]> {
   try {
-    let allMembers: UserProfile[] = [];
-    const cached = getLocalCache<UserProfile>(USERS_COLLECTION);
-    if (cached !== null) {
-      allMembers = [...cached];
-    } else {
-      try {
-        const colRef = collection(db, USERS_COLLECTION);
-        const snapshot = await withTimeout(getDocs(colRef), 1200);
-        allMembers = snapshot.docs.map(d => ({ uid: d.id, ...d.data() } as UserProfile));
-        setLocalCache(USERS_COLLECTION, allMembers);
-      } catch (e) {
-        console.debug("Firestore fetch team members fallback to local store:", e);
-        allMembers = [];
-        setLocalCache(USERS_COLLECTION, allMembers);
-      }
-    }
+    const allMembers = await fetchCollectionSynced<UserProfile>(USERS_COLLECTION, {
+      forceRemote: forceRefresh,
+      idField: 'uid',
+    });
 
     allMembers.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
     return allMembers;
   } catch (error) {
     console.error("Error in getTeamMembers:", error);
-    const cached = getLocalCache<UserProfile>(USERS_COLLECTION) || [];
-    return cached;
+    return getLocalCache<UserProfile>(USERS_COLLECTION) || [];
   }
 }
 
@@ -55,7 +38,8 @@ export async function getUserProfile(uid: string): Promise<UserProfile | null> {
     const found = cached.find(u => u.uid === uid);
     if (found) return found;
   }
-  return null;
+  const all = await getTeamMembers();
+  return all.find(u => u.uid === uid) || null;
 }
 
 export async function createOrUpdateUserProfile(
@@ -93,14 +77,8 @@ export async function createOrUpdateUserProfile(
   }
 
   const cleaned = cleanFirestoreData(finalProfile);
+  await writeDocSynced(USERS_COLLECTION, profileData.uid, cleaned);
 
-  // 1. Optimistic local store update (< 1ms)
-  addToLocalCache(USERS_COLLECTION, cleaned);
-
-  // 2. Non-blocking cloud sync in background
-  syncDocToFirestore(USERS_COLLECTION, profileData.uid, cleaned);
-
-  // 3. Log audit event
   if (actor) {
     logActivity(
       actor.uid,
@@ -122,8 +100,7 @@ export async function toggleUserActive(
   actor?: { uid: string; displayName: string; email: string }
 ): Promise<void> {
   const now = new Date().toISOString();
-  updateInLocalCache(USERS_COLLECTION, uid, { isActive, updatedAt: now });
-  syncDocToFirestore(USERS_COLLECTION, uid, { isActive, updatedAt: now });
+  await updateDocSynced(USERS_COLLECTION, uid, { isActive, updatedAt: now });
 
   if (actor) {
     logActivity(
@@ -139,32 +116,15 @@ export async function toggleUserActive(
 }
 
 export async function deleteUserProfile(uid: string): Promise<void> {
-  removeFromLocalCache(USERS_COLLECTION, uid);
-  syncDocDeleteFromFirestore(USERS_COLLECTION, uid);
+  await deleteDocSynced(USERS_COLLECTION, uid);
 }
 
 export async function getCustomRoles(): Promise<CustomRole[]> {
   try {
-    let roles: CustomRole[] = [];
-    const cached = getLocalCache<CustomRole>(ROLES_COLLECTION);
-    if (cached !== null) {
-      roles = [...cached];
-    } else {
-      try {
-        const colRef = collection(db, ROLES_COLLECTION);
-        const snapshot = await withTimeout(getDocs(colRef), 1200);
-        roles = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as CustomRole));
-        setLocalCache(ROLES_COLLECTION, roles);
-      } catch (e) {
-        roles = [];
-        setLocalCache(ROLES_COLLECTION, roles);
-      }
-    }
-    return roles;
+    return await fetchCollectionSynced<CustomRole>(ROLES_COLLECTION);
   } catch (error) {
     console.error("Error in getCustomRoles:", error);
-    const cached = getLocalCache<CustomRole>(ROLES_COLLECTION) || [];
-    return cached;
+    return getLocalCache<CustomRole>(ROLES_COLLECTION) || [];
   }
 }
 
@@ -178,9 +138,5 @@ export async function createCustomRole(roleData: Omit<CustomRole, 'id'>): Promis
   };
 
   const cleaned = cleanFirestoreData(newRole);
-
-  addToLocalCache(ROLES_COLLECTION, cleaned);
-  syncDocToFirestore(ROLES_COLLECTION, docRef.id, cleaned);
-
-  return cleaned;
+  return await writeDocSynced(ROLES_COLLECTION, docRef.id, cleaned);
 }

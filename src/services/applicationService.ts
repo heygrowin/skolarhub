@@ -1,20 +1,16 @@
 import { 
   collection, 
-  getDocs, 
   doc
 } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { Application, ApplicationStatus, ApplicationTimelineItem } from "../types";
 import { 
   cleanFirestoreData, 
-  getLocalCache, 
-  setLocalCache, 
-  addToLocalCache, 
-  updateInLocalCache, 
-  removeFromLocalCache,
-  syncDocToFirestore,
-  syncDocDeleteFromFirestore,
-  withTimeout
+  fetchCollectionSynced,
+  getLocalCache,
+  writeDocSynced,
+  updateDocSynced,
+  deleteDocSynced
 } from "../lib/firestoreUtils";
 
 const COLLECTION_NAME = "applications";
@@ -22,32 +18,18 @@ const COLLECTION_NAME = "applications";
 export interface ApplicationFilterOptions {
   studentId?: string;
   countryCode?: string;
+  intakeYear?: string;
   status?: string;
   assignedUserId?: string;
+  forceRefresh?: boolean;
 }
 
 export async function getApplications(filters: ApplicationFilterOptions = {}): Promise<Application[]> {
   try {
-    let allApps: Application[] = [];
+    let allApps = await fetchCollectionSynced<Application>(COLLECTION_NAME, {
+      forceRemote: filters.forceRefresh,
+    });
 
-    // 1. Try fast local store first (0ms latency)
-    const cached = getLocalCache<Application>(COLLECTION_NAME);
-    if (cached !== null) {
-      allApps = [...cached];
-    } else {
-      try {
-        const colRef = collection(db, COLLECTION_NAME);
-        const snapshot = await withTimeout(getDocs(colRef), 1200);
-        allApps = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Application));
-        setLocalCache(COLLECTION_NAME, allApps);
-      } catch (e) {
-        console.debug("Firestore fetch applications fallback to local store:", e);
-        allApps = [];
-        setLocalCache(COLLECTION_NAME, allApps);
-      }
-    }
-
-    // Fast in-memory sort
     allApps.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
 
     if (filters.studentId) {
@@ -55,6 +37,12 @@ export async function getApplications(filters: ApplicationFilterOptions = {}): P
     }
     if (filters.countryCode && filters.countryCode !== 'ALL') {
       allApps = allApps.filter(a => a.countryCode === filters.countryCode);
+    }
+    if (filters.intakeYear && filters.intakeYear !== 'ALL') {
+      allApps = allApps.filter(a => {
+        const yr = a.intakeYear || (a.createdAt ? new Date(a.createdAt).getFullYear().toString() : '');
+        return yr === filters.intakeYear;
+      });
     }
     if (filters.status && filters.status !== 'ALL') {
       allApps = allApps.filter(a => a.status === filters.status);
@@ -66,8 +54,7 @@ export async function getApplications(filters: ApplicationFilterOptions = {}): P
     return allApps;
   } catch (error) {
     console.error("Error in getApplications:", error);
-    const cached = getLocalCache<Application>(COLLECTION_NAME) || [];
-    return cached;
+    return getLocalCache<Application>(COLLECTION_NAME) || [];
   }
 }
 
@@ -77,7 +64,8 @@ export async function getApplicationById(id: string): Promise<Application | null
     const found = cached.find(a => a.id === id);
     if (found) return found;
   }
-  return null;
+  const all = await fetchCollectionSynced<Application>(COLLECTION_NAME);
+  return all.find(a => a.id === id) || null;
 }
 
 export async function createApplication(
@@ -100,6 +88,7 @@ export async function createApplication(
 
   const newApp: Application = {
     ...appData,
+    intakeYear: appData.intakeYear || new Date().getFullYear().toString(),
     id: docRef.id,
     statusHistory: [initialTimelineItem],
     createdAt: now,
@@ -107,14 +96,7 @@ export async function createApplication(
   };
 
   const cleanedApp = cleanFirestoreData(newApp);
-
-  // 1. Optimistic local store update (< 1ms)
-  addToLocalCache(COLLECTION_NAME, cleanedApp);
-
-  // 2. Non-blocking cloud sync in background
-  syncDocToFirestore(COLLECTION_NAME, docRef.id, cleanedApp);
-
-  return cleanedApp;
+  return await writeDocSynced(COLLECTION_NAME, docRef.id, cleanedApp);
 }
 
 export async function updateApplicationStatus(
@@ -144,11 +126,7 @@ export async function updateApplicationStatus(
     updatedAt: now,
   });
 
-  // 1. Optimistic local store update
-  updateInLocalCache(COLLECTION_NAME, appId, updates);
-
-  // 2. Non-blocking cloud sync in background
-  syncDocToFirestore(COLLECTION_NAME, appId, updates);
+  await updateDocSynced(COLLECTION_NAME, appId, updates);
 }
 
 export async function updateApplication(id: string, updates: Partial<Application>): Promise<void> {
@@ -158,11 +136,9 @@ export async function updateApplication(id: string, updates: Partial<Application
     updatedAt: now,
   });
 
-  updateInLocalCache(COLLECTION_NAME, id, cleaned);
-  syncDocToFirestore(COLLECTION_NAME, id, cleaned);
+  await updateDocSynced(COLLECTION_NAME, id, cleaned);
 }
 
 export async function deleteApplication(id: string): Promise<void> {
-  removeFromLocalCache(COLLECTION_NAME, id);
-  syncDocDeleteFromFirestore(COLLECTION_NAME, id);
+  await deleteDocSynced(COLLECTION_NAME, id);
 }

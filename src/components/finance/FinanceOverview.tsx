@@ -12,9 +12,11 @@ import {
   getInvoices, 
   getPayments, 
   getExpenses, 
-  getBusinessFinancialSummary, 
+  calculateBusinessFinancialSummary, 
   createInvoice, 
+  updateInvoice,
   recordPayment, 
+  updatePayment,
   recordExpense, 
   deleteInvoice, 
   deletePayment, 
@@ -23,6 +25,8 @@ import {
 import { getStudents } from '../../services/studentService';
 import { getPartners } from '../../services/partnerService';
 import { useAuth } from '../../context/AuthContext';
+import { useYear } from '../../context/YearContext';
+import { useCountry } from '../../context/CountryContext';
 import { useToast } from '../../context/ToastContext';
 import { Button } from '../common/Button';
 import { Badge } from '../common/Badge';
@@ -42,7 +46,8 @@ import {
   RefreshCw, 
   CheckCircle2, 
   Clock, 
-  AlertCircle 
+  AlertCircle,
+  Edit3
 } from 'lucide-react';
 
 interface FinanceOverviewProps {
@@ -55,6 +60,8 @@ export const FinanceOverview: React.FC<FinanceOverviewProps> = ({
   preselectedPartnerId,
 }) => {
   const { hasPermission } = useAuth();
+  const { selectedYearFilter } = useYear();
+  const { selectedCountryFilter } = useCountry();
   const { success, error } = useToast();
 
   const [activeTab, setActiveTab] = useState<'invoices' | 'payments' | 'expenses'>('invoices');
@@ -74,7 +81,9 @@ export const FinanceOverview: React.FC<FinanceOverviewProps> = ({
 
   // Modals
   const [invoiceModalOpen, setInvoiceModalOpen] = useState(false);
+  const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const [editingPayment, setEditingPayment] = useState<Payment | null>(null);
   const [expenseModalOpen, setExpenseModalOpen] = useState(false);
   const [printInvoiceModalOpen, setPrintInvoiceModalOpen] = useState(false);
   const [selectedInvoiceForPrint, setSelectedInvoiceForPrint] = useState<Invoice | null>(null);
@@ -84,55 +93,100 @@ export const FinanceOverview: React.FC<FinanceOverviewProps> = ({
   const canRecordExpense = hasPermission('finance.record_expense');
   const canDeleteFinance = hasPermission('finance.delete');
 
-  const loadFinanceData = useCallback(async () => {
+  const loadFinanceData = useCallback(async (forceRefresh: boolean = false) => {
     setLoading(true);
     try {
-      const [invList, payList, expList, studentRes, partnerList, summ] = await Promise.all([
-        getInvoices(),
-        getPayments(),
-        getExpenses(),
-        getStudents(),
-        getPartners(),
-        getBusinessFinancialSummary(),
+      const [invList, payList, expList, studentRes, partnerList] = await Promise.all([
+        getInvoices(undefined, forceRefresh),
+        getPayments(undefined, forceRefresh),
+        getExpenses(undefined, undefined, forceRefresh),
+        getStudents({ forceRefresh }),
+        getPartners(forceRefresh),
       ]);
 
-      setInvoices(invList);
-      setPayments(payList);
-      setExpenses(expList);
+      const studentMap = new Map(studentRes.students.map(s => [s.id, s]));
+
+      const matchesYear = (itemYr?: string, fallbackDate?: string, sId?: string) => {
+        if (selectedYearFilter === 'ALL') return true;
+        const st = sId ? studentMap.get(sId) : undefined;
+        const resolved = itemYr || st?.intakeYear || (fallbackDate ? new Date(fallbackDate).getFullYear().toString() : '');
+        return resolved === selectedYearFilter;
+      };
+
+      const matchesCountry = (cCode?: string, sId?: string) => {
+        if (selectedCountryFilter === 'ALL') return true;
+        const st = sId ? studentMap.get(sId) : undefined;
+        const resolved = cCode || st?.countryOfInterest;
+        return resolved === selectedCountryFilter;
+      };
+
+      const filteredInvoices = invList.filter(
+        i => matchesYear(i.intakeYear, i.invoiceDate, i.studentId) && matchesCountry(i.countryCode, i.studentId)
+      );
+      const filteredPayments = payList.filter(
+        p => matchesYear(p.intakeYear, p.paymentDate, p.studentId) && matchesCountry(undefined, p.studentId)
+      );
+      const filteredExpenses = expList.filter(
+        e => matchesYear(e.intakeYear, e.date, e.studentId) && matchesCountry(e.countryCode, e.studentId)
+      );
+
+      setInvoices(filteredInvoices);
+      setPayments(filteredPayments);
+      setExpenses(filteredExpenses);
       setStudents(studentRes.students);
       setPartners(partnerList);
-      setSummary(summ);
+      setSummary(calculateBusinessFinancialSummary(filteredInvoices, filteredPayments, filteredExpenses));
     } catch (err: any) {
       error('Failed to load finance ledgers', err.message);
     } finally {
       setLoading(false);
     }
-  }, [error]);
+  }, [error, selectedYearFilter, selectedCountryFilter]);
 
   useEffect(() => {
-    loadFinanceData();
+    loadFinanceData(false);
   }, [loadFinanceData]);
 
-  const handleCreateInvoice = async (data: any) => {
+  const handleSaveInvoice = async (data: any, invoiceId?: string) => {
     try {
-      await createInvoice(data);
-      success('Invoice Issued', `Invoice ${data.invoiceNumber} recorded.`);
-      loadFinanceData();
+      if (invoiceId) {
+        await updateInvoice(invoiceId, data);
+        success('Invoice Updated', `Invoice ${data.invoiceNumber} updated.`);
+      } else {
+        await createInvoice(data);
+        success('Invoice Issued', `Invoice ${data.invoiceNumber} recorded.`);
+      }
+      loadFinanceData(false);
     } catch (err: any) {
-      error('Failed to create invoice', err.message);
+      error('Failed to save invoice', err.message);
       throw err;
     }
   };
 
-  const handleRecordPayment = async (data: any) => {
+  const handleOpenEditInvoice = (inv: Invoice) => {
+    setEditingInvoice(inv);
+    setInvoiceModalOpen(true);
+  };
+
+  const handleSavePayment = async (data: any, paymentId?: string) => {
     try {
-      await recordPayment(data);
-      success('Payment Recorded', `Payment of ${data.currency} ${data.amount} credited.`);
+      if (paymentId) {
+        await updatePayment(paymentId, data);
+        success('Payment Updated', `Payment record ${data.transactionReference || ''} updated.`);
+      } else {
+        await recordPayment(data);
+        success('Payment Recorded', `Payment of ${data.currency} ${data.amount} credited.`);
+      }
       loadFinanceData();
     } catch (err: any) {
-      error('Failed to record payment', err.message);
+      error('Failed to save payment', err.message);
       throw err;
     }
+  };
+
+  const handleOpenEditPayment = (p: Payment) => {
+    setEditingPayment(p);
+    setPaymentModalOpen(true);
   };
 
   const handleRecordExpense = async (data: any) => {
@@ -202,7 +256,7 @@ export const FinanceOverview: React.FC<FinanceOverviewProps> = ({
           <Button
             variant="secondary"
             size="sm"
-            onClick={loadFinanceData}
+            onClick={() => loadFinanceData(true)}
             loading={loading}
             icon={<RefreshCw className="w-3.5 h-3.5" />}
           >
@@ -213,7 +267,10 @@ export const FinanceOverview: React.FC<FinanceOverviewProps> = ({
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setInvoiceModalOpen(true)}
+              onClick={() => {
+                setEditingInvoice(null);
+                setInvoiceModalOpen(true);
+              }}
               icon={<ReceiptText className="w-4 h-4" />}
             >
               New Invoice
@@ -334,10 +391,22 @@ export const FinanceOverview: React.FC<FinanceOverviewProps> = ({
 
                       return (
                         <tr key={inv.id} className="hover:bg-slate-50/50 transition-colors">
-                          <td className="py-3.5 px-4 font-bold text-navy-950">{inv.invoiceNumber}</td>
+                          <td className="py-3.5 px-4 font-bold text-navy-950">
+                            <span className="block">{inv.invoiceNumber}</span>
+                            {inv.intakeYear && (
+                              <span className="text-[10px] font-semibold text-gold-700 bg-gold-50 px-1.5 py-0.5 rounded border border-gold-200/60">
+                                {inv.intakeYear}
+                              </span>
+                            )}
+                          </td>
                           <td className="py-3.5 px-4 font-semibold text-navy-900">{inv.studentName}</td>
                           <td className="py-3.5 px-4 font-extrabold text-navy-950">
-                            {sym}{inv.amount.toLocaleString()}
+                            <span className="block">{sym}{inv.amount.toLocaleString()}</span>
+                            {(inv.discount || 0) > 0 && (
+                              <span className="text-[10px] text-emerald-600 font-semibold">
+                                Disc: -{sym}{inv.discount?.toLocaleString()}
+                              </span>
+                            )}
                           </td>
                           <td className="py-3.5 px-4">
                             <span className="text-emerald-600 font-bold block">{sym}{(inv.paidAmount || 0).toLocaleString()}</span>
@@ -365,6 +434,15 @@ export const FinanceOverview: React.FC<FinanceOverviewProps> = ({
                               >
                                 <Printer className="w-4 h-4" />
                               </button>
+                              {canCreateInvoice && (
+                                <button
+                                  onClick={() => handleOpenEditInvoice(inv)}
+                                  title="Edit Invoice & Discount"
+                                  className="p-1.5 text-slate-400 hover:text-gold-600 hover:bg-gold-50 rounded-lg transition-colors"
+                                >
+                                  <Edit3 className="w-4 h-4" />
+                                </button>
+                              )}
                               {canDeleteFinance && (
                                 <button
                                   onClick={() => handleDeleteInvoice(inv)}
@@ -430,15 +508,24 @@ export const FinanceOverview: React.FC<FinanceOverviewProps> = ({
                             {p.invoiceNumber ? <Badge variant="navy" size="sm">{p.invoiceNumber}</Badge> : 'Unlinked'}
                           </td>
                           <td className="py-3.5 px-4 text-right">
-                            {canDeleteFinance && (
+                            <div className="flex items-center justify-end gap-1">
                               <button
-                                onClick={() => handleDeletePayment(p)}
-                                title="Delete"
-                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                                onClick={() => handleOpenEditPayment(p)}
+                                title="Edit Payment"
+                                className="p-1.5 text-slate-400 hover:text-navy-950 hover:bg-slate-100 rounded-lg transition-colors"
                               >
-                                <Trash2 className="w-4 h-4" />
+                                <Edit3 className="w-4 h-4" />
                               </button>
-                            )}
+                              {canDeleteFinance && (
+                                <button
+                                  onClick={() => handleDeletePayment(p)}
+                                  title="Delete"
+                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );
@@ -520,23 +607,31 @@ export const FinanceOverview: React.FC<FinanceOverviewProps> = ({
         )}
       </div>
 
-      {/* Invoice Creation Modal */}
+      {/* Invoice Creation / Editing Modal */}
       <InvoiceFormModal
         isOpen={invoiceModalOpen}
-        onClose={() => setInvoiceModalOpen(false)}
-        onSubmit={handleCreateInvoice}
+        onClose={() => {
+          setInvoiceModalOpen(false);
+          setEditingInvoice(null);
+        }}
+        onSubmit={handleSaveInvoice}
         students={students}
         preselectedStudentId={preselectedStudentId}
+        initialInvoice={editingInvoice}
       />
 
-      {/* Payment Recording Modal */}
+      {/* Payment Recording / Editing Modal */}
       <PaymentFormModal
         isOpen={paymentModalOpen}
-        onClose={() => setPaymentModalOpen(false)}
-        onSubmit={handleRecordPayment}
+        onClose={() => {
+          setPaymentModalOpen(false);
+          setEditingPayment(null);
+        }}
+        onSubmit={handleSavePayment}
         students={students}
         invoices={invoices}
         preselectedStudentId={preselectedStudentId}
+        initialPayment={editingPayment}
       />
 
       {/* Expense Recording Modal */}
@@ -556,6 +651,7 @@ export const FinanceOverview: React.FC<FinanceOverviewProps> = ({
         onClose={() => setPrintInvoiceModalOpen(false)}
         invoice={selectedInvoiceForPrint}
         student={students.find(s => s.id === selectedInvoiceForPrint?.studentId)}
+        payments={payments}
       />
     </div>
   );

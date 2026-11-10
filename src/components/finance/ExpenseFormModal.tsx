@@ -3,8 +3,10 @@ import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { Input } from '../common/Input';
 import { Select } from '../common/Select';
+import { CreatableSelect } from '../common/CreatableSelect';
 import { Student, Partner, Currency, ExpenseCategory } from '../../types';
 import { useCountry } from '../../context/CountryContext';
+import { useYear } from '../../context/YearContext';
 import { useToast } from '../../context/ToastContext';
 
 interface ExpenseFormModalProps {
@@ -17,6 +19,18 @@ interface ExpenseFormModalProps {
   preselectedPartnerId?: string;
 }
 
+const DEFAULT_EXPENSE_CATEGORIES = [
+  'University Application Fee',
+  'Document Translation',
+  'Legalization/Apostille',
+  'Visa Processing',
+  'Courier',
+  'Partner Commission',
+  'Marketing',
+  'Office/Admin',
+  'Other',
+];
+
 export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
   isOpen,
   onClose,
@@ -27,6 +41,7 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
   preselectedPartnerId,
 }) => {
   const { countries } = useCountry();
+  const { years, selectedYearFilter } = useYear();
   const { error: toastError } = useToast();
   const [loading, setLoading] = useState(false);
 
@@ -34,6 +49,7 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
   const [amount, setAmount] = useState<number>(100);
   const [currency, setCurrency] = useState<Currency>('EUR');
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [intakeYear, setIntakeYear] = useState<string>('2026');
   const [category, setCategory] = useState<ExpenseCategory>('University Application Fee');
   const [countryCode, setCountryCode] = useState<string>('IT');
   const [studentId, setStudentId] = useState<string>('');
@@ -42,20 +58,37 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
+      const defaultYr = selectedYearFilter !== 'ALL' ? selectedYearFilter : String(new Date().getFullYear());
+      setIntakeYear(defaultYr);
+
       if (preselectedStudentId) {
         setStudentId(preselectedStudentId);
         const s = students.find(st => st.id === preselectedStudentId);
         if (s?.countryOfInterest) setCountryCode(s.countryOfInterest);
+        if (s?.intakeYear) setIntakeYear(s.intakeYear);
+      } else {
+        setStudentId('');
       }
+
       if (preselectedPartnerId) {
         setPartnerId(preselectedPartnerId);
         setCategory('Partner Commission');
         const p = partners.find(pr => pr.id === preselectedPartnerId);
         if (p) setTitle(`Creator / Agent Commission - ${p.name}`);
+      } else {
+        setPartnerId('');
       }
+
       setDate(new Date().toISOString().split('T')[0]);
     }
-  }, [isOpen, preselectedStudentId, preselectedPartnerId, students, partners]);
+  }, [isOpen, preselectedStudentId, preselectedPartnerId, students, partners, selectedYearFilter]);
+
+  const handleStudentChange = (nextId: string) => {
+    setStudentId(nextId);
+    const s = students.find(st => st.id === nextId);
+    if (s?.countryOfInterest) setCountryCode(s.countryOfInterest);
+    if (s?.intakeYear) setIntakeYear(s.intakeYear);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -74,6 +107,7 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
         amount: Number(amount),
         currency,
         date,
+        intakeYear: intakeYear || String(new Date().getFullYear()),
         category,
         countryCode: countryCode || 'IT',
         description: description.trim() || '',
@@ -126,7 +160,7 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
           required
         />
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-3 gap-3">
           <Input
             label="Amount *"
             type="number"
@@ -146,24 +180,26 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
               { value: 'INR', label: 'INR (₹)' },
             ]}
           />
+
+          <CreatableSelect
+            label="Intake Year *"
+            categoryKey="intake_years"
+            value={intakeYear}
+            onChange={(val) => setIntakeYear(val)}
+            options={years}
+            placeholder="Year..."
+          />
         </div>
 
         <div className="grid grid-cols-2 gap-3">
-          <Select
+          <CreatableSelect
             label="Category *"
+            categoryKey="expense_categories"
             value={category}
-            onChange={(e) => setCategory(e.target.value as ExpenseCategory)}
-            options={[
-              { value: 'University Application Fee', label: 'University Application Fee' },
-              { value: 'Document Translation', label: 'Document Translation' },
-              { value: 'Legalization/Apostille', label: 'Legalization / Apostille' },
-              { value: 'Visa Processing', label: 'Visa Processing' },
-              { value: 'Courier', label: 'DHL / International Courier' },
-              { value: 'Partner Commission', label: 'B2B Partner Commission Payout' },
-              { value: 'Marketing', label: 'Marketing & Outreach' },
-              { value: 'Office/Admin', label: 'Office & Admin' },
-              { value: 'Other', label: 'Other Operational Cost' },
-            ]}
+            onChange={(val) => setCategory(val)}
+            options={DEFAULT_EXPENSE_CATEGORIES}
+            placeholder="Select or add category..."
+            required
           />
 
           <Input
@@ -175,7 +211,6 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
           />
         </div>
 
-        {/* Association Blocks */}
         <div className="grid grid-cols-2 gap-3">
           <Select
             label="Destination Country"
@@ -187,7 +222,7 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
           <Select
             label="Associate Student (Optional)"
             value={studentId}
-            onChange={(e) => setStudentId(e.target.value)}
+            onChange={(e) => handleStudentChange(e.target.value)}
             options={[
               { value: '', label: '-- None (General Overhead) --' },
               ...students.map(s => ({ value: s.id, label: s.fullName }))
@@ -215,7 +250,7 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
             rows={2}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="Receipt receipt number, payment voucher reference, specific notes..."
+            placeholder="Receipt number, payment voucher reference, specific notes..."
             className="w-full rounded-xl border border-slate-300 p-2.5 text-xs text-navy-950 focus:border-navy-600 focus:outline-none"
           />
         </div>
@@ -223,4 +258,3 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
     </Modal>
   );
 };
-

@@ -3,8 +3,10 @@ import { DocumentRecord, Student } from '../../types';
 import { getDocuments, deleteDocumentRecord, updateDocumentStatus } from '../../services/documentService';
 import { getStudents } from '../../services/studentService';
 import { useCountry } from '../../context/CountryContext';
+import { useYear } from '../../context/YearContext';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
+import { getAccessibleDocumentUrl } from '../../lib/storageService';
 import { Button } from '../common/Button';
 import { Badge } from '../common/Badge';
 import { EmptyState } from '../common/EmptyState';
@@ -25,6 +27,7 @@ import {
 
 export const DocumentList: React.FC = () => {
   const { countries, selectedCountryFilter, setSelectedCountryFilter } = useCountry();
+  const { selectedYearFilter } = useYear();
   const { hasPermission } = useAuth();
   const { success, error } = useToast();
 
@@ -46,15 +49,17 @@ export const DocumentList: React.FC = () => {
   const canDelete = hasPermission('document.delete');
   const canReview = hasPermission('document.review');
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (forceRefresh: boolean = false) => {
     setLoading(true);
     try {
       const [docs, studentRes] = await Promise.all([
         getDocuments({
           countryCode: selectedCountryFilter !== 'ALL' ? selectedCountryFilter : undefined,
+          intakeYear: selectedYearFilter !== 'ALL' ? selectedYearFilter : undefined,
           category: categoryFilter !== 'ALL' ? categoryFilter : undefined,
+          forceRefresh,
         }),
-        getStudents(),
+        getStudents({ forceRefresh }),
       ]);
 
       setDocuments(docs);
@@ -64,18 +69,18 @@ export const DocumentList: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [selectedCountryFilter, categoryFilter, error]);
+  }, [selectedCountryFilter, selectedYearFilter, categoryFilter, error]);
 
   useEffect(() => {
-    loadData();
+    loadData(false);
   }, [loadData]);
 
   const handleDelete = async (docRecord: DocumentRecord) => {
     if (!window.confirm(`Permanently delete ${docRecord.name}?`)) return;
     try {
-      await deleteDocumentRecord(docRecord.id, docRecord.storagePath);
+      await deleteDocumentRecord(docRecord.id, docRecord.storagePath, docRecord.fileUrl);
       success('Document Deleted', 'File removed from vault.');
-      loadData();
+      loadData(false);
     } catch (err: any) {
       error('Delete Failed', err.message);
     }
@@ -116,7 +121,7 @@ export const DocumentList: React.FC = () => {
           <Button
             variant="secondary"
             size="sm"
-            onClick={loadData}
+            onClick={() => loadData(true)}
             loading={loading}
             icon={<RefreshCw className="w-3.5 h-3.5" />}
           >
@@ -272,7 +277,7 @@ export const DocumentList: React.FC = () => {
                   </button>
 
                   <a
-                    href={doc.fileUrl}
+                    href={getAccessibleDocumentUrl(doc.fileUrl, true)}
                     target="_blank"
                     rel="noreferrer"
                     download={doc.name}
@@ -302,7 +307,7 @@ export const DocumentList: React.FC = () => {
       <DocumentUploadModal
         isOpen={uploadModalOpen}
         onClose={() => setUploadModalOpen(false)}
-        onSuccess={loadData}
+        onSuccess={() => loadData(false)}
         students={students}
       />
 
@@ -311,7 +316,7 @@ export const DocumentList: React.FC = () => {
         isOpen={previewModalOpen}
         onClose={() => setPreviewModalOpen(false)}
         document={previewingDoc}
-        onStatusChanged={loadData}
+        onStatusChanged={() => loadData(false)}
       />
     </div>
   );

@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
-import { ToastProvider } from './context/ToastContext';
+import React, { useState, useEffect, useCallback } from 'react';
+import { ToastProvider, useToast } from './context/ToastContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { CountryProvider } from './context/CountryContext';
+import { YearProvider } from './context/YearContext';
 import { AppLayout } from './components/layout/AppLayout';
 import { NavigationSection } from './components/layout/Sidebar';
 import { DashboardView } from './components/dashboard/DashboardView';
@@ -26,18 +27,21 @@ import { DocumentPreviewModal } from './components/documents/DocumentPreviewModa
 import { getStudents, createStudent } from './services/studentService';
 import { getPartners, createPartner } from './services/partnerService';
 import { createCountry } from './services/countryService';
-import { createInvoice, recordExpense, recordPayment } from './services/financeService';
+import { getInvoices, createInvoice, recordExpense, recordPayment } from './services/financeService';
 import { createApplication } from './services/applicationService';
 import { initProductionWorkspace } from './lib/seedData';
-import { Student, Partner, DocumentRecord } from './types';
-import { useToast } from './context/ToastContext';
+import { Student, Partner, Invoice, DocumentRecord } from './types';
 import { Loader2 } from 'lucide-react';
 
-const MainAppContent: React.FC = () => {
-  const { userProfile, loading, canAccessModule } = useAuth();
-  const { success, error } = useToast();
+/**
+ * Authenticated Workspace: Mounts and synchronizes Firestore data ONLY after user signs in cleanly.
+ */
+const AuthenticatedWorkspace: React.FC = () => {
+  const { userProfile, canAccessModule } = useAuth();
+  const { success } = useToast();
 
   const [currentSection, setCurrentSection] = useState<NavigationSection>('dashboard');
+  const [dataVersion, setDataVersion] = useState<number>(0);
 
   // Shared Modals
   const [addStudentOpen, setAddStudentOpen] = useState(false);
@@ -51,44 +55,37 @@ const MainAppContent: React.FC = () => {
   const [previewDocOpen, setPreviewDocOpen] = useState(false);
   const [previewDoc, setPreviewDoc] = useState<DocumentRecord | null>(null);
 
-  // Cross-modal selected IDs
+  // Cross-modal selected IDs & live cache
   const [selectedStudentId, setSelectedStudentId] = useState<string>('');
   const [selectedPartnerId, setSelectedPartnerId] = useState<string>('');
   const [cachedStudents, setCachedStudents] = useState<Student[]>([]);
   const [cachedPartners, setCachedPartners] = useState<Partner[]>([]);
+  const [cachedInvoices, setCachedInvoices] = useState<Invoice[]>([]);
 
-  const loadCache = async () => {
+  const loadCache = useCallback(async () => {
     try {
-      const [stRes, ptList] = await Promise.all([getStudents(), getPartners()]);
+      const [stRes, ptList, invList] = await Promise.all([
+        getStudents(),
+        getPartners(),
+        getInvoices(),
+      ]);
       setCachedStudents(stRes.students);
       setCachedPartners(ptList);
+      setCachedInvoices(invList);
     } catch (e) {
       console.warn(e);
     }
-  };
-
-  React.useEffect(() => {
-    initProductionWorkspace();
-    loadCache();
   }, []);
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-[#101A32] flex flex-col items-center justify-center text-white space-y-4">
-        <div className="w-14 h-14 rounded-3xl bg-gold-400 text-navy-950 font-serif font-bold text-2xl flex items-center justify-center shadow-gold-glow animate-pulse">
-          S
-        </div>
-        <div className="flex items-center gap-2 text-sm text-slate-300">
-          <Loader2 className="w-4 h-4 animate-spin text-gold-400" />
-          <span>Synchronizing SKOLAR Control Center...</span>
-        </div>
-      </div>
-    );
-  }
+  useEffect(() => {
+    initProductionWorkspace();
+    loadCache();
+  }, [loadCache]);
 
-  if (!userProfile) {
-    return <LoginForm />;
-  }
+  const bumpVersion = async () => {
+    await loadCache();
+    setDataVersion((v) => v + 1);
+  };
 
   // Cross-entity handlers
   const handleOpenAddStudent = () => {
@@ -106,25 +103,26 @@ const MainAppContent: React.FC = () => {
 
   const handleOpenCreateInvoice = (stId?: string) => {
     loadCache();
-    if (stId) setSelectedStudentId(stId);
+    setSelectedStudentId(stId || '');
     setCreateInvoiceOpen(true);
   };
 
   const handleOpenRecordExpense = (stId?: string) => {
     loadCache();
-    if (stId) setSelectedStudentId(stId);
+    setSelectedStudentId(stId || '');
+    setSelectedPartnerId('');
     setRecordExpenseOpen(true);
   };
 
   const handleOpenRecordPayment = (stId?: string) => {
     loadCache();
-    if (stId) setSelectedStudentId(stId);
+    setSelectedStudentId(stId || '');
     setRecordPaymentOpen(true);
   };
 
   const handleOpenCreateApplication = (stId?: string) => {
     loadCache();
-    if (stId) setSelectedStudentId(stId);
+    setSelectedStudentId(stId || '');
     setCreateAppOpen(true);
   };
 
@@ -154,12 +152,14 @@ const MainAppContent: React.FC = () => {
           onOpenAddPartner={handleOpenAddPartner}
           onOpenCreateInvoice={() => handleOpenCreateInvoice()}
           onOpenRecordExpense={() => handleOpenRecordExpense()}
+          dataVersion={dataVersion}
         />
       )}
 
       {/* 2. Students View */}
       {currentSection === 'students' && canAccessModule('students') && (
         <StudentList
+          key={`students-${dataVersion}`}
           onOpenCreateApplication={handleOpenCreateApplication}
           onOpenCreateInvoice={handleOpenCreateInvoice}
           onOpenRecordPayment={handleOpenRecordPayment}
@@ -170,17 +170,18 @@ const MainAppContent: React.FC = () => {
 
       {/* 3. Applications View */}
       {currentSection === 'applications' && canAccessModule('applications') && (
-        <ApplicationList />
+        <ApplicationList key={`apps-${dataVersion}`} />
       )}
 
       {/* 4. Countries View */}
       {currentSection === 'countries' && canAccessModule('countries') && (
-        <CountryList />
+        <CountryList key={`countries-${dataVersion}`} />
       )}
 
       {/* 5. Partners View */}
       {currentSection === 'partners' && canAccessModule('partners') && (
         <PartnerList
+          key={`partners-${dataVersion}`}
           onOpenRecordPayout={handleOpenPartnerPayout}
           onSelectStudent={() => setCurrentSection('students')}
         />
@@ -189,6 +190,7 @@ const MainAppContent: React.FC = () => {
       {/* 6. Finance View */}
       {currentSection === 'finance' && canAccessModule('finance') && (
         <FinanceOverview
+          key={`finance-${dataVersion}`}
           preselectedStudentId={selectedStudentId}
           preselectedPartnerId={selectedPartnerId}
         />
@@ -196,7 +198,7 @@ const MainAppContent: React.FC = () => {
 
       {/* 7. Documents View */}
       {currentSection === 'documents' && canAccessModule('documents') && (
-        <DocumentList />
+        <DocumentList key={`docs-${dataVersion}`} />
       )}
 
       {/* 8. Team View */}
@@ -216,7 +218,7 @@ const MainAppContent: React.FC = () => {
         onSubmit={async (data) => {
           await createStudent(data);
           success('Student Registered', `${data.fullName} is now enrolled.`);
-          await loadCache();
+          await bumpVersion();
         }}
         partners={cachedPartners}
       />
@@ -227,6 +229,7 @@ const MainAppContent: React.FC = () => {
         onSubmit={async (data) => {
           await createCountry(data);
           success('Country Added', `${data.name} is now available.`);
+          await bumpVersion();
         }}
       />
 
@@ -236,7 +239,7 @@ const MainAppContent: React.FC = () => {
         onSubmit={async (data) => {
           await createPartner(data);
           success('Partner Onboarded', `${data.name} joined the network.`);
-          await loadCache();
+          await bumpVersion();
         }}
       />
 
@@ -246,6 +249,7 @@ const MainAppContent: React.FC = () => {
         onSubmit={async (data) => {
           await createInvoice(data);
           success('Invoice Created', `Invoice ${data.invoiceNumber} recorded.`);
+          await bumpVersion();
         }}
         students={cachedStudents}
         preselectedStudentId={selectedStudentId}
@@ -257,6 +261,7 @@ const MainAppContent: React.FC = () => {
         onSubmit={async (data) => {
           await recordExpense(data);
           success('Expense Logged', `${data.title} recorded.`);
+          await bumpVersion();
         }}
         students={cachedStudents}
         partners={cachedPartners}
@@ -270,9 +275,10 @@ const MainAppContent: React.FC = () => {
         onSubmit={async (data) => {
           await recordPayment(data);
           success('Payment Received', `${data.currency} ${data.amount} credited.`);
+          await bumpVersion();
         }}
         students={cachedStudents}
-        invoices={[]}
+        invoices={cachedInvoices}
         preselectedStudentId={selectedStudentId}
       />
 
@@ -280,8 +286,9 @@ const MainAppContent: React.FC = () => {
         isOpen={createAppOpen}
         onClose={() => setCreateAppOpen(false)}
         onSubmit={async (data) => {
-          await createApplication(data, userProfile.uid, userProfile.displayName);
+          await createApplication(data, userProfile?.uid || 'admin', userProfile?.displayName || 'Admin');
           success('Application Dossier Created', `Application created for ${data.studentName}.`);
+          await bumpVersion();
         }}
         students={cachedStudents}
         preselectedStudentId={selectedStudentId}
@@ -290,7 +297,7 @@ const MainAppContent: React.FC = () => {
       <DocumentUploadModal
         isOpen={uploadDocOpen}
         onClose={() => setUploadDocOpen(false)}
-        onSuccess={() => {}}
+        onSuccess={bumpVersion}
         students={cachedStudents}
       />
 
@@ -298,9 +305,34 @@ const MainAppContent: React.FC = () => {
         isOpen={previewDocOpen}
         onClose={() => setPreviewDocOpen(false)}
         document={previewDoc}
+        onStatusChanged={bumpVersion}
       />
     </AppLayout>
   );
+};
+
+const MainAppContent: React.FC = () => {
+  const { userProfile, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#101A32] flex flex-col items-center justify-center text-white space-y-4">
+        <div className="w-14 h-14 rounded-3xl bg-gold-400 text-navy-950 font-serif font-bold text-2xl flex items-center justify-center shadow-gold-glow animate-pulse">
+          S
+        </div>
+        <div className="flex items-center gap-2 text-sm text-slate-300">
+          <Loader2 className="w-4 h-4 animate-spin text-gold-400" />
+          <span>Synchronizing SKOLAR Control Center...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!userProfile) {
+    return <LoginForm />;
+  }
+
+  return <AuthenticatedWorkspace />;
 };
 
 export const App: React.FC = () => {
@@ -308,7 +340,9 @@ export const App: React.FC = () => {
     <ToastProvider>
       <AuthProvider>
         <CountryProvider>
-          <MainAppContent />
+          <YearProvider>
+            <MainAppContent />
+          </YearProvider>
         </CountryProvider>
       </AuthProvider>
     </ToastProvider>
@@ -316,4 +350,3 @@ export const App: React.FC = () => {
 };
 
 export default App;
-

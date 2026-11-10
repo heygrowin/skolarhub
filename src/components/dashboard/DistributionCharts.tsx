@@ -29,16 +29,14 @@ export const DistributionCharts: React.FC<DistributionChartsProps> = ({
 
   const totalApps = applications.length || 1;
 
-  // 3. Application Status Breakdown
-  const statusCounts: { [status: string]: number } = {};
-  applications.forEach(app => {
-    statusCounts[app.status] = (statusCounts[app.status] || 0) + 1;
+  // 3. Real Candidate Intake Year Distribution (computed from actual Firebase/local records)
+  const yearMap: Record<string, number> = {};
+  students.forEach(s => {
+    const yr = s.intakeYear || (s.registrationDate ? new Date(s.registrationDate).getFullYear().toString() : String(new Date().getFullYear()));
+    yearMap[yr] = (yearMap[yr] || 0) + 1;
   });
-
-  // 4. Monthly Registration Activity (Last 6 Months)
-  const monthLabels = ['May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct'];
-  const monthlyData = [4, 7, 12, 19, 24, students.length || 15];
-  const maxMonthVal = Math.max(...monthlyData, 1);
+  const yearEntries = Object.entries(yearMap).sort((a, b) => a[0].localeCompare(b[0]));
+  const maxYearVal = Math.max(...yearEntries.map(([, val]) => val), 1);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -138,23 +136,30 @@ export const DistributionCharts: React.FC<DistributionChartsProps> = ({
             })
           )}
 
-          {/* Simple Activity Chart SVG */}
+          {/* Real Intake Year Cohort Breakdown */}
           <div className="pt-4 border-t border-slate-100 mt-4">
-            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2">Registration Velocity</span>
-            <div className="flex items-end justify-between h-20 gap-2 px-1">
-              {monthlyData.map((val, idx) => {
-                const heightPct = Math.round((val / maxMonthVal) * 100);
-                return (
-                  <div key={idx} className="flex-1 flex flex-col items-center gap-1 h-full justify-end group">
-                    <div 
-                      className="w-full bg-navy-100 group-hover:bg-gold-400 rounded-t transition-all duration-300"
-                      style={{ height: `${Math.max(15, heightPct)}%` }}
-                    />
-                    <span className="text-[10px] text-slate-400 font-medium">{monthLabels[idx]}</span>
-                  </div>
-                );
-              })}
-            </div>
+            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2">
+              Candidates by Intake Year
+            </span>
+            {yearEntries.length === 0 ? (
+              <p className="text-xs text-slate-400 py-3 text-center">No enrollment data yet</p>
+            ) : (
+              <div className="flex items-end justify-between h-20 gap-2 px-1">
+                {yearEntries.map(([yr, val]) => {
+                  const heightPct = Math.round((val / maxYearVal) * 100);
+                  return (
+                    <div key={yr} className="flex-1 flex flex-col items-center gap-1 h-full justify-end group" title={`${yr}: ${val} students`}>
+                      <span className="text-[10px] font-bold text-navy-900">{val}</span>
+                      <div
+                        className="w-full bg-navy-200 group-hover:bg-gold-400 rounded-t transition-all duration-300"
+                        style={{ height: `${Math.max(15, heightPct)}%` }}
+                      />
+                      <span className="text-[10px] text-slate-500 font-semibold">{yr}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       </div>

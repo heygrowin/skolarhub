@@ -34,8 +34,10 @@ export const CountryProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, []);
 
   useEffect(() => {
-    loadCountries();
-  }, [loadCountries]);
+    if (userProfile) {
+      loadCountries();
+    }
+  }, [userProfile, loadCountries]);
 
   // If user is restricted to a specific country (e.g. Counsellor for Italy), automatically set filter
   useEffect(() => {

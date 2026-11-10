@@ -55,6 +55,7 @@ export interface Student {
   previousEducation: string;
   schoolOrUniversity: string;
   academicMarks: string;
+  intakeYear?: string; // e.g. '2024', '2025', '2026', '2027'
   neetScore?: string;
   neetQualified?: boolean;
   otherQualifications?: string;
@@ -109,6 +110,7 @@ export interface Application {
   countryName: string;
   university: string;
   course: string;
+  intakeYear?: string;
   intake?: string; // e.g. "Fall 2026", "Spring 2027"
   status: ApplicationStatus;
   assignedUserId?: string;
@@ -125,7 +127,8 @@ export type PartnerType =
   | 'Education Agent'
   | 'Referral Partner'
   | 'Business Partner'
-  | 'Other';
+  | 'Other'
+  | string;
 
 export interface Partner {
   id: string;
@@ -164,6 +167,14 @@ export interface Invoice {
   studentName: string;
   applicationId?: string;
   countryCode?: string;
+  intakeYear?: string;
+  subtotal?: number;
+  discount?: number;
+  discountType?: 'flat' | 'percentage';
+  discountValue?: number;
+  discountReason?: string;
+  taxRate?: number;
+  taxAmount?: number;
   amount: number;
   paidAmount: number;
   currency: Currency;
@@ -177,7 +188,7 @@ export interface Invoice {
   updatedAt: string;
 }
 
-export type PaymentMethod = 'Bank Transfer' | 'Credit Card' | 'Cash' | 'UPI/Other';
+export type PaymentMethod = 'Bank Transfer' | 'Credit Card' | 'Cash' | 'UPI' | string;
 
 export interface Payment {
   id: string;
@@ -185,6 +196,7 @@ export interface Payment {
   studentName: string;
   invoiceId?: string;
   invoiceNumber?: string;
+  intakeYear?: string;
   amount: number;
   currency: Currency;
   paymentDate: string;
@@ -206,7 +218,8 @@ export type ExpenseCategory =
   | 'Marketing'
   | 'Partner Commission'
   | 'Office/Admin'
-  | 'Other';
+  | 'Other'
+  | string;
 
 export interface Expense {
   id: string;
@@ -214,6 +227,7 @@ export interface Expense {
   amount: number;
   currency: Currency;
   date: string;
+  intakeYear?: string;
   studentId?: string;
   studentName?: string;
   applicationId?: string;
@@ -236,7 +250,8 @@ export type DocumentCategory =
   | 'CV/Resume'
   | 'Financial Document'
   | 'University Offer Letter'
-  | 'Other';
+  | 'Other'
+  | string;
 
 export type DocumentReviewStatus = 'Pending' | 'Approved' | 'Rejected';
 
@@ -247,6 +262,7 @@ export interface DocumentRecord {
   studentName?: string;
   applicationId?: string;
   countryCode: string;
+  intakeYear?: string;
   category: DocumentCategory;
   uploadedBy: string;
   uploadedByName?: string;

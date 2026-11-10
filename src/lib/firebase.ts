@@ -2,8 +2,7 @@ import { initializeApp, getApps, getApp } from "firebase/app";
 import { 
   getAuth, 
   setPersistence, 
-  browserLocalPersistence,
-  signInAnonymously
+  browserLocalPersistence
 } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
@@ -29,8 +28,11 @@ export const firebaseConfig = {
   measurementId: getEnv("VITE_FIREBASE_MEASUREMENT_ID", "G-RT7C0MRNWG")
 };
 
-// Vercel Blob Token provided as storage backup/complement
-export const BLOB_READ_WRITE_TOKEN = getEnv("VITE_BLOB_READ_WRITE_TOKEN", "vercel_blob_rw_kqKxcWLpEJemlcvg_WgGyYRfchAxrhAyJIHg844g8LtXex7");
+// Vercel Blob Token provided for document & receipt storage
+export const BLOB_READ_WRITE_TOKEN = getEnv(
+  "VITE_BLOB_READ_WRITE_TOKEN",
+  "vercel_blob_rw_kqKxcWLpEJemlcvg_WgGyYRfchAxrhAyJIHg844g8LtXex7"
+);
 
 // Initialize Firebase App singleton
 export const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
@@ -38,28 +40,43 @@ export const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getA
 // Auth Instance
 export const auth = getAuth(app);
 try {
-  setPersistence(auth, browserLocalPersistence);
+  if (typeof window !== "undefined") {
+    setPersistence(auth, browserLocalPersistence);
+  }
 } catch (e) {
   console.warn("Auth persistence notice:", e);
 }
 
-// Fast standard Firestore Instance
+// Cloud Firestore Instance
 export const db = getFirestore(app);
 
-// Firebase Storage Instance
+// Firebase Storage Instance (capped retry time so unreachable buckets fail fast cleanly)
 export const storage = getStorage(app);
+try {
+  storage.maxUploadRetryTime = 4000;
+  storage.maxOperationRetryTime = 4000;
+} catch {}
 
 /**
- * Ensures a valid Firebase Auth session exists so security rules pass
+ * Waits for Firebase Auth persistence hydration to complete before reading/writing Firestore.
+ * Returns true if an authenticated Firebase user session is active.
  */
-export async function ensureAuthenticated(): Promise<void> {
-  if (!auth.currentUser) {
-    try {
-      await signInAnonymously(auth);
-    } catch (e) {
-      console.warn("Anonymous auth fallback notice:", e);
+export async function waitForAuthReady(): Promise<boolean> {
+  try {
+    if (typeof (auth as any).authStateReady === "function") {
+      await (auth as any).authStateReady();
     }
+  } catch (e) {
+    console.debug("Auth state ready wait notice:", e);
   }
+  return !!auth.currentUser;
+}
+
+/**
+ * Compatibility helper: waits for Auth state hydration (never forces background auto-login when signed out)
+ */
+export async function ensureAuthenticated(): Promise<boolean> {
+  return waitForAuthReady();
 }
 
 export default app;

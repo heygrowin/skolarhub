@@ -149,6 +149,9 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
             <span className="text-xs bg-white/10 px-3 py-1.5 rounded-xl border border-white/20 font-semibold">
               Destination: {student.countryOfInterest === 'IT' ? '🇮🇹 Italy' : student.countryOfInterest === 'MN' ? '🇲🇳 Mongolia' : student.countryOfInterest}
             </span>
+            <span className="text-xs bg-gold-400/20 text-gold-300 px-3 py-1.5 rounded-xl border border-gold-400/30 font-bold">
+              Intake: {student.intakeYear || '2025'}
+            </span>
           </div>
         </div>
 
@@ -186,6 +189,12 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
 
               <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2 text-xs">
                 <h5 className="font-bold text-navy-950 uppercase tracking-wider mb-2">Academic Qualifications</h5>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Intake Academic Year:</span>
+                  <span className="font-bold text-gold-700 bg-gold-50 px-2 py-0.5 rounded-md border border-gold-200/50">
+                    {student.intakeYear || '2025'}
+                  </span>
+                </div>
                 <div className="flex justify-between">
                   <span className="text-slate-400">Previous Education:</span>
                   <span className="font-semibold text-navy-900">{student.previousEducation || 'Not provided'}</span>
@@ -264,6 +273,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
             onOpenCreateInvoice={() => onOpenCreateInvoice(student.id)}
             onOpenRecordPayment={() => onOpenRecordPayment(student.id)}
             onOpenRecordExpense={() => onOpenRecordExpense(student.id)}
+            onRefresh={loadStudentRelatedData}
           />
         )}
       </div>

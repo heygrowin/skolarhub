@@ -92,15 +92,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   useEffect(() => {
-    // Listen to Firebase Auth state
+    // Listen to Firebase Auth state — strictly require explicit login on first launch (no auto-login bypass)
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         setFirebaseUser(user);
-        const profile = await fetchProfile(user.uid, user.email || 'user@skolar.it');
+        const profile = await fetchProfile(user.uid, user.email || 'admin@skolar.it');
         setUserProfile(profile);
         setIsSimulated(false);
+        setLoading(false);
       } else {
-        // Check if there is an existing authenticated session saved
+        // Check if there is an explicitly saved session in localStorage (offline fallback login)
         const savedSession = localStorage.getItem('skolar_active_session');
         if (savedSession) {
           try {
@@ -112,13 +113,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setIsSimulated(false);
           }
         } else {
-          // Always start with login page: no direct auto-login
+          // Always show Login screen when unauthenticated
           setUserProfile(null);
           setIsSimulated(false);
         }
         setFirebaseUser(null);
+        setLoading(false);
       }
-      setLoading(false);
     });
 
     return () => unsubscribe();

@@ -60,11 +60,15 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
       <div className="w-full max-w-md bg-white rounded-3xl border border-slate-200/90 shadow-elevated p-8 space-y-6">
         {/* Brand Header */}
         <div className="text-center space-y-2">
-          <div className="w-12 h-12 rounded-2xl bg-midnight text-gold-400 font-serif font-bold text-xl flex items-center justify-center mx-auto shadow-md">
-            S
-          </div>
+          <img
+            src="/logo-white.png"
+            alt="SKOLAR"
+            className="h-16 w-auto mx-auto object-contain"
+            onError={(e) => {
+              (e.target as HTMLElement).style.display = 'none';
+            }}
+          />
           <div>
-            <h1 className="font-serif text-2xl font-bold tracking-tight text-[#101A32]">SKOLAR</h1>
             <p className="text-xs uppercase tracking-widest text-[#C69A4B] font-bold">Control Center</p>
           </div>
           <p className="text-xs text-slate-400">

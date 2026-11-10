@@ -3,9 +3,11 @@ import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { Input } from '../common/Input';
 import { Select } from '../common/Select';
+import { CreatableSelect } from '../common/CreatableSelect';
 import { Student, Country, Partner, CustomFieldDefinition } from '../../types';
 import { getCustomFields } from '../../services/customFieldService';
 import { useCountry } from '../../context/CountryContext';
+import { useYear } from '../../context/YearContext';
 import { useToast } from '../../context/ToastContext';
 
 interface StudentFormModalProps {
@@ -24,6 +26,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
   partners,
 }) => {
   const { countries } = useCountry();
+  const { years, selectedYearFilter } = useYear();
   const { error: toastError } = useToast();
   const [loading, setLoading] = useState<boolean>(false);
   const [customFields, setCustomFields] = useState<CustomFieldDefinition[]>([]);
@@ -38,7 +41,8 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
   const [passportNumber, setPassportNumber] = useState('');
   const [passportExpiry, setPassportExpiry] = useState('');
 
-  // Academic
+  // Academic & Intake
+  const [intakeYear, setIntakeYear] = useState('2025');
   const [previousEducation, setPreviousEducation] = useState('High School (12th Grade)');
   const [schoolOrUniversity, setSchoolOrUniversity] = useState('');
   const [academicMarks, setAcademicMarks] = useState('');
@@ -49,7 +53,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
   const [acquisitionType, setAcquisitionType] = useState<'B2C' | 'B2B'>('B2C');
   const [countryOfInterest, setCountryOfInterest] = useState<string>('IT');
   const [partnerId, setPartnerId] = useState<string>('');
-  const [leadSource, setLeadSource] = useState('Website');
+  const [leadSource, setLeadSource] = useState('Website Form (skolar.it)');
   const [notes, setNotes] = useState('');
 
   // Dynamic Custom Field Values
@@ -65,7 +69,8 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
       setAddress(initialData.address || '');
       setPassportNumber(initialData.passportNumber || '');
       setPassportExpiry(initialData.passportExpiry || '');
-      setPreviousEducation(initialData.previousEducation || 'High School');
+      setIntakeYear(initialData.intakeYear || new Date().getFullYear().toString());
+      setPreviousEducation(initialData.previousEducation || 'High School (12th Grade)');
       setSchoolOrUniversity(initialData.schoolOrUniversity || '');
       setAcademicMarks(initialData.academicMarks || '');
       setNeetScore(initialData.neetScore || '');
@@ -73,7 +78,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
       setAcquisitionType(initialData.acquisitionType || 'B2C');
       setCountryOfInterest(initialData.countryOfInterest || 'IT');
       setPartnerId(initialData.partnerId || '');
-      setLeadSource(initialData.leadSource || 'Website');
+      setLeadSource(initialData.leadSource || 'Website Form (skolar.it)');
       setNotes(initialData.notes || '');
       setCustomFieldValues(initialData.customFields || {});
     } else {
@@ -86,6 +91,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
       setAddress('');
       setPassportNumber('');
       setPassportExpiry('');
+      setIntakeYear(selectedYearFilter !== 'ALL' ? selectedYearFilter : String(new Date().getFullYear()));
       setPreviousEducation('High School (12th Grade)');
       setSchoolOrUniversity('');
       setAcademicMarks('');
@@ -94,11 +100,11 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
       setAcquisitionType('B2C');
       setCountryOfInterest(countries[0]?.code || 'IT');
       setPartnerId('');
-      setLeadSource('Website');
+      setLeadSource('Website Form (skolar.it)');
       setNotes('');
       setCustomFieldValues({});
     }
-  }, [initialData, countries, isOpen]);
+  }, [initialData, countries, isOpen, selectedYearFilter]);
 
   // Load relevant custom fields when countryOfInterest changes
   useEffect(() => {
@@ -135,6 +141,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
         address: address || '',
         passportNumber: passportNumber.trim() || '',
         passportExpiry: passportExpiry || '',
+        intakeYear: intakeYear || '2025',
         previousEducation: previousEducation || '',
         schoolOrUniversity: schoolOrUniversity || '',
         academicMarks: academicMarks || '',
@@ -233,18 +240,34 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
                 ]}
               />
             ) : (
-              <Select
-                label="Lead Source"
+              <CreatableSelect
+                label="Lead Acquisition Source"
+                categoryKey="lead_sources"
                 value={leadSource}
-                onChange={(e) => setLeadSource(e.target.value)}
+                onChange={(val) => setLeadSource(val)}
                 options={[
-                  { value: 'Website Form (skolar.it)', label: 'Website Form (skolar.it)' },
-                  { value: 'Instagram / Social Media', label: 'Instagram / Social Media' },
-                  { value: 'Direct Call / WhatsApp', label: 'Direct Call / WhatsApp' },
-                  { value: 'Word of Mouth / Alumni', label: 'Word of Mouth / Alumni' },
+                  'Website Form (skolar.it)',
+                  'Instagram / Social Media',
+                  'Direct Call / WhatsApp',
+                  'Google Search',
+                  'Education Fair',
+                  'Alumni / Word of Mouth',
+                  'Direct Walk-in',
                 ]}
+                placeholder="Select or type new lead source..."
               />
             )}
+
+            <CreatableSelect
+              label="Intake Academic Year *"
+              categoryKey="intake_years"
+              value={intakeYear}
+              onChange={(val) => setIntakeYear(val)}
+              options={years}
+              placeholder="Select or type year (e.g. 2026)..."
+              required
+              helperText="Tap to view or add custom year"
+            />
 
             <Select
               label="Country of Interest *"
@@ -289,11 +312,13 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
               value={dateOfBirth}
               onChange={(e) => setDateOfBirth(e.target.value)}
             />
-            <Input
+            <CreatableSelect
               label="Nationality"
-              placeholder="e.g. Italian, Indian, Mongolian"
+              categoryKey="nationalities"
               value={nationality}
-              onChange={(e) => setNationality(e.target.value)}
+              onChange={(val) => setNationality(val)}
+              options={['Indian', 'Italian', 'Mongolian', 'Nepalese', 'Bangladeshi', 'Nigerian', 'Sri Lankan', 'Pakistani']}
+              placeholder="Select or add nationality..."
             />
             <Input
               label="Passport Number"
@@ -318,11 +343,20 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
             03. Academic Qualifications
           </h4>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Input
+            <CreatableSelect
               label="Highest Completed Education"
-              placeholder="e.g. 12th Grade Science / Bachelor Degree"
+              categoryKey="education_levels"
               value={previousEducation}
-              onChange={(e) => setPreviousEducation(e.target.value)}
+              onChange={(val) => setPreviousEducation(val)}
+              options={[
+                'High School (12th Grade)',
+                'Senior Secondary (12th PCB)',
+                'Senior Secondary (12th PCM)',
+                'Bachelor Degree (BSc / BTech / BA)',
+                'Master Degree (MSc / MBA)',
+                'Diploma / Foundation Year',
+              ]}
+              placeholder="Select or type qualification..."
             />
             <Input
               label="School or Institution Name"
@@ -374,15 +408,14 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
               {customFields.map((field) => (
                 <div key={field.id}>
                   {field.fieldType === 'dropdown' ? (
-                    <Select
+                    <CreatableSelect
                       label={field.fieldName}
+                      categoryKey={`cf_${field.key}`}
                       value={customFieldValues[field.key] || ''}
-                      onChange={(e) => handleCustomFieldChange(field.key, e.target.value)}
+                      onChange={(val) => handleCustomFieldChange(field.key, val)}
                       required={field.required}
-                      options={[
-                        { value: '', label: `-- Select ${field.fieldName} --` },
-                        ...(field.options || []).map(opt => ({ value: opt, label: opt }))
-                      ]}
+                      options={field.options || []}
+                      placeholder={`Select or add ${field.fieldName}...`}
                       helperText={field.description}
                     />
                   ) : field.fieldType === 'boolean' || field.fieldType === 'checkbox' ? (

@@ -1,20 +1,16 @@
 import { 
   collection, 
-  getDocs, 
   doc
 } from "firebase/firestore";
 import { db } from "../lib/firebase";
-import { Invoice, Payment, Expense, Currency, StudentFinancialSummary, BusinessFinancialSummary } from "../types";
+import { Invoice, Payment, Expense, Currency, StudentFinancialSummary, BusinessFinancialSummary, InvoiceStatus } from "../types";
 import { 
   cleanFirestoreData, 
-  getLocalCache, 
-  setLocalCache, 
-  addToLocalCache, 
-  updateInLocalCache, 
-  removeFromLocalCache,
-  syncDocToFirestore,
-  syncDocDeleteFromFirestore,
-  withTimeout
+  fetchCollectionSynced,
+  getLocalCache,
+  writeDocSynced,
+  updateDocSynced,
+  deleteDocSynced
 } from "../lib/firestoreUtils";
 
 export type { StudentFinancialSummary, BusinessFinancialSummary };
@@ -22,24 +18,11 @@ export type { StudentFinancialSummary, BusinessFinancialSummary };
 // ==========================================
 // 1. INVOICES
 // ==========================================
-export async function getInvoices(studentId?: string): Promise<Invoice[]> {
+export async function getInvoices(studentId?: string, forceRefresh: boolean = false): Promise<Invoice[]> {
   try {
-    let allInvoices: Invoice[] = [];
-    const cached = getLocalCache<Invoice>("invoices");
-    if (cached !== null) {
-      allInvoices = [...cached];
-    } else {
-      try {
-        const colRef = collection(db, "invoices");
-        const snapshot = await withTimeout(getDocs(colRef), 1200);
-        allInvoices = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Invoice));
-        setLocalCache("invoices", allInvoices);
-      } catch (e) {
-        console.debug("Firestore fetch invoices fallback to local store:", e);
-        allInvoices = [];
-        setLocalCache("invoices", allInvoices);
-      }
-    }
+    let allInvoices = await fetchCollectionSynced<Invoice>("invoices", {
+      forceRemote: forceRefresh,
+    });
 
     allInvoices.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
 
@@ -61,61 +44,91 @@ export async function createInvoice(invoiceData: Omit<Invoice, 'id' | 'createdAt
 
   const newInvoice: Invoice = {
     ...invoiceData,
+    intakeYear: invoiceData.intakeYear || new Date().getFullYear().toString(),
     id: docRef.id,
     paidAmount: 0,
-    status: invoiceData.status || 'draft',
+    status: invoiceData.status || 'sent',
     createdAt: now,
     updatedAt: now,
   };
 
   const cleaned = cleanFirestoreData(newInvoice);
-
-  // 1. Optimistic local store update (< 1ms)
-  addToLocalCache("invoices", cleaned);
-
-  // 2. Non-blocking cloud sync in background
-  syncDocToFirestore("invoices", docRef.id, cleaned);
-
-  return cleaned;
+  return await writeDocSynced("invoices", docRef.id, cleaned);
 }
 
 export async function updateInvoice(id: string, updates: Partial<Invoice>): Promise<void> {
   const now = new Date().toISOString();
-  const cleaned = cleanFirestoreData({
+  const existing = (await getInvoices()).find(i => i.id === id);
+
+  const mergedUpdates: Partial<Invoice> = {
     ...updates,
     updatedAt: now,
-  });
+  };
 
-  updateInLocalCache("invoices", id, cleaned);
-  syncDocToFirestore("invoices", id, cleaned);
+  // Re-evaluate status if invoice total amount changed
+  if (existing && updates.amount !== undefined) {
+    const paid = updates.paidAmount ?? existing.paidAmount ?? 0;
+    if (paid >= updates.amount) {
+      mergedUpdates.status = 'paid';
+    } else if (paid > 0) {
+      mergedUpdates.status = 'partial';
+    } else if (existing.status === 'paid' || existing.status === 'partial') {
+      mergedUpdates.status = 'sent';
+    }
+  }
+
+  const cleaned = cleanFirestoreData(mergedUpdates);
+  await updateDocSynced("invoices", id, cleaned);
 }
 
 export async function deleteInvoice(id: string): Promise<void> {
-  removeFromLocalCache("invoices", id);
-  syncDocDeleteFromFirestore("invoices", id);
+  await deleteDocSynced("invoices", id);
+}
+
+/**
+ * Recomputes an invoice's exact paidAmount & status from all currently stored payments linked to it.
+ */
+async function recalculateInvoiceFromPayments(invoiceId: string): Promise<void> {
+  if (!invoiceId) return;
+  try {
+    const [allInvoices, allPayments] = await Promise.all([
+      getInvoices(),
+      getPayments(),
+    ]);
+    const targetInv = allInvoices.find(i => i.id === invoiceId);
+    if (!targetInv) return;
+
+    const totalPaid = allPayments
+      .filter(p => p.invoiceId === invoiceId)
+      .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+
+    let newStatus: InvoiceStatus = targetInv.status;
+    if (totalPaid >= targetInv.amount) {
+      newStatus = 'paid';
+    } else if (totalPaid > 0) {
+      newStatus = 'partial';
+    } else if (targetInv.status === 'paid' || targetInv.status === 'partial') {
+      newStatus = 'sent';
+    }
+
+    await updateDocSynced<Invoice>("invoices", invoiceId, {
+      paidAmount: totalPaid,
+      status: newStatus,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (e) {
+    console.warn("Failed to recalculate invoice balance:", e);
+  }
 }
 
 // ==========================================
 // 2. PAYMENTS
 // ==========================================
-export async function getPayments(studentId?: string): Promise<Payment[]> {
+export async function getPayments(studentId?: string, forceRefresh: boolean = false): Promise<Payment[]> {
   try {
-    let allPayments: Payment[] = [];
-    const cached = getLocalCache<Payment>("payments");
-    if (cached !== null) {
-      allPayments = [...cached];
-    } else {
-      try {
-        const colRef = collection(db, "payments");
-        const snapshot = await withTimeout(getDocs(colRef), 1200);
-        allPayments = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Payment));
-        setLocalCache("payments", allPayments);
-      } catch (e) {
-        console.debug("Firestore fetch payments fallback to local store:", e);
-        allPayments = [];
-        setLocalCache("payments", allPayments);
-      }
-    }
+    let allPayments = await fetchCollectionSynced<Payment>("payments", {
+      forceRemote: forceRefresh,
+    });
 
     allPayments.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
 
@@ -137,61 +150,65 @@ export async function recordPayment(paymentData: Omit<Payment, 'id' | 'createdAt
 
   const newPayment: Payment = {
     ...paymentData,
+    intakeYear: paymentData.intakeYear || new Date().getFullYear().toString(),
     id: payDocRef.id,
     createdAt: now,
     updatedAt: now,
   };
 
   const cleanedPayment = cleanFirestoreData(newPayment);
+  await writeDocSynced("payments", payDocRef.id, cleanedPayment);
 
-  // 1. Optimistic local store update for payment (< 1ms)
-  addToLocalCache("payments", cleanedPayment);
-
-  // 2. If connected to an invoice, update invoice paidAmount & status immediately in local store
   if (paymentData.invoiceId) {
-    const cachedInvoices = getLocalCache<Invoice>("invoices") || [];
-    const targetInv = cachedInvoices.find(i => i.id === paymentData.invoiceId);
-    if (targetInv) {
-      const newPaid = (targetInv.paidAmount || 0) + paymentData.amount;
-      const newStatus = newPaid >= targetInv.amount ? 'paid' : 'partial';
-      const updatedInv = { paidAmount: newPaid, status: newStatus as any, updatedAt: now };
-      updateInLocalCache("invoices", targetInv.id, updatedInv);
-      syncDocToFirestore("invoices", targetInv.id, { ...targetInv, ...updatedInv });
-    }
+    await recalculateInvoiceFromPayments(paymentData.invoiceId);
   }
-
-  // 3. Non-blocking cloud sync in background
-  syncDocToFirestore("payments", payDocRef.id, cleanedPayment);
 
   return cleanedPayment;
 }
 
+export async function updatePayment(id: string, updates: Partial<Payment>): Promise<void> {
+  const now = new Date().toISOString();
+  const existingPayments = await getPayments();
+  const previousPayment = existingPayments.find(p => p.id === id);
+
+  const cleanedUpdates = cleanFirestoreData({
+    ...updates,
+    updatedAt: now,
+  });
+
+  await updateDocSynced("payments", id, cleanedUpdates);
+
+  // Recalculate both old invoice (if unlinked/changed) and new invoice
+  const prevInvoiceId = previousPayment?.invoiceId;
+  const nextInvoiceId = updates.invoiceId !== undefined ? updates.invoiceId : prevInvoiceId;
+
+  if (prevInvoiceId) {
+    await recalculateInvoiceFromPayments(prevInvoiceId);
+  }
+  if (nextInvoiceId && nextInvoiceId !== prevInvoiceId) {
+    await recalculateInvoiceFromPayments(nextInvoiceId);
+  }
+}
+
 export async function deletePayment(id: string): Promise<void> {
-  removeFromLocalCache("payments", id);
-  syncDocDeleteFromFirestore("payments", id);
+  const existingPayments = await getPayments();
+  const target = existingPayments.find(p => p.id === id);
+
+  await deleteDocSynced("payments", id);
+
+  if (target?.invoiceId) {
+    await recalculateInvoiceFromPayments(target.invoiceId);
+  }
 }
 
 // ==========================================
 // 3. EXPENSES
 // ==========================================
-export async function getExpenses(studentId?: string, countryCode?: string): Promise<Expense[]> {
+export async function getExpenses(studentId?: string, countryCode?: string, forceRefresh: boolean = false): Promise<Expense[]> {
   try {
-    let allExpenses: Expense[] = [];
-    const cached = getLocalCache<Expense>("expenses");
-    if (cached !== null) {
-      allExpenses = [...cached];
-    } else {
-      try {
-        const colRef = collection(db, "expenses");
-        const snapshot = await withTimeout(getDocs(colRef), 1200);
-        allExpenses = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Expense));
-        setLocalCache("expenses", allExpenses);
-      } catch (e) {
-        console.debug("Firestore fetch expenses fallback to local store:", e);
-        allExpenses = [];
-        setLocalCache("expenses", allExpenses);
-      }
-    }
+    let allExpenses = await fetchCollectionSynced<Expense>("expenses", {
+      forceRemote: forceRefresh,
+    });
 
     allExpenses.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
 
@@ -205,8 +222,7 @@ export async function getExpenses(studentId?: string, countryCode?: string): Pro
     return allExpenses;
   } catch (error) {
     console.error("Error in getExpenses:", error);
-    const cached = getLocalCache<Expense>("expenses") || [];
-    return cached;
+    return getLocalCache<Expense>("expenses") || [];
   }
 }
 
@@ -217,20 +233,14 @@ export async function recordExpense(expenseData: Omit<Expense, 'id' | 'createdAt
 
   const newExpense: Expense = {
     ...expenseData,
+    intakeYear: expenseData.intakeYear || new Date().getFullYear().toString(),
     id: docRef.id,
     createdAt: now,
     updatedAt: now,
   };
 
   const cleaned = cleanFirestoreData(newExpense);
-
-  // 1. Optimistic local store update (< 1ms)
-  addToLocalCache("expenses", cleaned);
-
-  // 2. Non-blocking cloud sync in background
-  syncDocToFirestore("expenses", docRef.id, cleaned);
-
-  return cleaned;
+  return await writeDocSynced("expenses", docRef.id, cleaned);
 }
 
 export async function updateExpense(id: string, updates: Partial<Expense>): Promise<void> {
@@ -240,13 +250,11 @@ export async function updateExpense(id: string, updates: Partial<Expense>): Prom
     updatedAt: now,
   });
 
-  updateInLocalCache("expenses", id, cleaned);
-  syncDocToFirestore("expenses", id, cleaned);
+  await updateDocSynced("expenses", id, cleaned);
 }
 
 export async function deleteExpense(id: string): Promise<void> {
-  removeFromLocalCache("expenses", id);
-  syncDocDeleteFromFirestore("expenses", id);
+  await deleteDocSynced("expenses", id);
 }
 
 // ==========================================

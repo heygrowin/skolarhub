@@ -1,20 +1,16 @@
 import { 
   collection, 
-  getDocs, 
   doc
 } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { Country } from "../types";
 import { 
   cleanFirestoreData, 
-  getLocalCache, 
-  setLocalCache, 
-  addToLocalCache, 
-  updateInLocalCache, 
-  removeFromLocalCache,
-  syncDocToFirestore,
-  syncDocDeleteFromFirestore,
-  withTimeout
+  fetchCollectionSynced,
+  getLocalCache,
+  writeDocSynced,
+  updateDocSynced,
+  deleteDocSynced
 } from "../lib/firestoreUtils";
 
 const COLLECTION_NAME = "countries";
@@ -99,30 +95,12 @@ export const DEFAULT_COUNTRIES: Country[] = [
   }
 ];
 
-export async function getCountries(): Promise<Country[]> {
+export async function getCountries(forceRefresh: boolean = false): Promise<Country[]> {
   try {
-    let allCountries: Country[] = [];
-    const cached = getLocalCache<Country>(COLLECTION_NAME);
-    
-    if (cached !== null && cached.length > 0) {
-      allCountries = [...cached];
-    } else {
-      try {
-        const colRef = collection(db, COLLECTION_NAME);
-        const snapshot = await withTimeout(getDocs(colRef), 1200);
-        if (!snapshot.empty) {
-          allCountries = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Country));
-        } else {
-          allCountries = [...DEFAULT_COUNTRIES];
-        }
-        setLocalCache(COLLECTION_NAME, allCountries);
-      } catch (e) {
-        console.debug("Firestore fetch countries fallback to default baseline:", e);
-        allCountries = [...DEFAULT_COUNTRIES];
-        setLocalCache(COLLECTION_NAME, allCountries);
-      }
-    }
-
+    const allCountries = await fetchCollectionSynced<Country>(COLLECTION_NAME, {
+      forceRemote: forceRefresh,
+      seedIfRemoteEmpty: DEFAULT_COUNTRIES,
+    });
     allCountries.sort((a, b) => a.name.localeCompare(b.name));
     return allCountries;
   } catch (error) {
@@ -150,14 +128,7 @@ export async function createCountry(countryData: Omit<Country, 'id' | 'createdAt
   };
 
   const cleaned = cleanFirestoreData(newCountry);
-
-  // 1. Optimistic local store update (< 1ms)
-  addToLocalCache(COLLECTION_NAME, cleaned);
-
-  // 2. Non-blocking cloud sync in background
-  syncDocToFirestore(COLLECTION_NAME, customId, cleaned);
-
-  return cleaned;
+  return await writeDocSynced(COLLECTION_NAME, customId, cleaned);
 }
 
 export async function updateCountry(id: string, updates: Partial<Country>): Promise<void> {
@@ -167,11 +138,9 @@ export async function updateCountry(id: string, updates: Partial<Country>): Prom
     updatedAt: now,
   });
 
-  updateInLocalCache(COLLECTION_NAME, id, cleaned);
-  syncDocToFirestore(COLLECTION_NAME, id, cleaned);
+  await updateDocSynced(COLLECTION_NAME, id, cleaned);
 }
 
 export async function deleteCountry(id: string): Promise<void> {
-  removeFromLocalCache(COLLECTION_NAME, id);
-  syncDocDeleteFromFirestore(COLLECTION_NAME, id);
+  await deleteDocSynced(COLLECTION_NAME, id);
 }

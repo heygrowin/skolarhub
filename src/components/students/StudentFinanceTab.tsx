@@ -1,9 +1,14 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Student, Invoice, Payment, Expense, StudentFinancialSummary, Currency } from '../../types';
 import { Button } from '../common/Button';
 import { Badge } from '../common/Badge';
-import { Plus, ReceiptText, CreditCard, Coins } from 'lucide-react';
+import { ReceiptText, CreditCard, Coins, Edit3, Trash2, Printer } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { useToast } from '../../context/ToastContext';
+import { PaymentFormModal } from '../finance/PaymentFormModal';
+import { InvoiceFormModal } from '../finance/InvoiceFormModal';
+import { InvoicePrintModal } from '../finance/InvoicePrintModal';
+import { updatePayment, deletePayment, updateInvoice, deleteInvoice } from '../../services/financeService';
 
 interface StudentFinanceTabProps {
   student: Student;
@@ -14,6 +19,7 @@ interface StudentFinanceTabProps {
   onOpenCreateInvoice: () => void;
   onOpenRecordPayment: () => void;
   onOpenRecordExpense: () => void;
+  onRefresh?: () => void;
 }
 
 export const StudentFinanceTab: React.FC<StudentFinanceTabProps> = ({
@@ -25,12 +31,20 @@ export const StudentFinanceTab: React.FC<StudentFinanceTabProps> = ({
   onOpenCreateInvoice,
   onOpenRecordPayment,
   onOpenRecordExpense,
+  onRefresh = () => {},
 }) => {
   const { hasPermission } = useAuth();
+  const { success, error } = useToast();
+
   const canViewFinance = hasPermission('finance.view');
   const canCreateInvoice = hasPermission('finance.create_invoice');
   const canRecordPayment = hasPermission('finance.record_payment');
   const canRecordExpense = hasPermission('finance.record_expense');
+  const canDeleteFinance = hasPermission('finance.delete');
+
+  const [editingPayment, setEditingPayment] = useState<Payment | null>(null);
+  const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
+  const [printingInvoice, setPrintingInvoice] = useState<Invoice | null>(null);
 
   if (!canViewFinance) {
     return (
@@ -42,6 +56,42 @@ export const StudentFinanceTab: React.FC<StudentFinanceTabProps> = ({
 
   const currencies: Currency[] = ['EUR', 'USD', 'INR'];
   const currencySymbols = { EUR: '€', USD: '$', INR: '₹' };
+
+  const handleSavePaymentEdit = async (data: any, paymentId?: string) => {
+    if (!paymentId) return;
+    await updatePayment(paymentId, data);
+    success('Payment Updated', `Updated ${data.currency} ${data.amount} record.`);
+    onRefresh();
+  };
+
+  const handleDeletePayment = async (p: Payment) => {
+    if (!window.confirm(`Delete payment of ${p.currency} ${p.amount}?`)) return;
+    try {
+      await deletePayment(p.id);
+      success('Payment Deleted', 'Payment entry removed.');
+      onRefresh();
+    } catch (err: any) {
+      error('Delete Failed', err.message);
+    }
+  };
+
+  const handleSaveInvoiceEdit = async (data: any, invoiceId?: string) => {
+    if (!invoiceId) return;
+    await updateInvoice(invoiceId, data);
+    success('Invoice Updated', `${data.invoiceNumber} updated.`);
+    onRefresh();
+  };
+
+  const handleDeleteInvoice = async (inv: Invoice) => {
+    if (!window.confirm(`Delete invoice ${inv.invoiceNumber}?`)) return;
+    try {
+      await deleteInvoice(inv.id);
+      success('Invoice Deleted', `${inv.invoiceNumber} removed.`);
+      onRefresh();
+    } catch (err: any) {
+      error('Delete Failed', err.message);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -118,25 +168,59 @@ export const StudentFinanceTab: React.FC<StudentFinanceTabProps> = ({
         ) : (
           <div className="divide-y divide-slate-100 rounded-2xl bg-white border border-slate-200/80 overflow-hidden">
             {invoices.map((inv) => (
-              <div key={inv.id} className="p-3.5 flex items-center justify-between text-xs hover:bg-slate-50/50">
+              <div key={inv.id} className="p-3.5 flex items-center justify-between gap-3 text-xs hover:bg-slate-50/50">
                 <div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span className="font-bold text-navy-950">{inv.invoiceNumber}</span>
                     <Badge variant={inv.status === 'paid' ? 'green' : inv.status === 'partial' ? 'yellow' : 'navy'} size="sm">
                       {inv.status}
                     </Badge>
+                    {(inv.discount || 0) > 0 && (
+                      <Badge variant="gold" size="sm">
+                        -{currencySymbols[inv.currency]}{inv.discount} off
+                      </Badge>
+                    )}
                   </div>
                   <p className="text-[11px] text-slate-400 mt-0.5">
                     Date: {inv.invoiceDate} • Due: {inv.dueDate}
                   </p>
                 </div>
-                <div className="text-right">
-                  <span className="font-extrabold text-navy-950 block">
-                    {currencySymbols[inv.currency]}{inv.amount.toLocaleString()}
-                  </span>
-                  <span className="text-[11px] text-emerald-600">
-                    Paid: {currencySymbols[inv.currency]}{(inv.paidAmount || 0).toLocaleString()}
-                  </span>
+                <div className="flex items-center gap-3">
+                  <div className="text-right">
+                    <span className="font-extrabold text-navy-950 block">
+                      {currencySymbols[inv.currency]}{inv.amount.toLocaleString()}
+                    </span>
+                    <span className="text-[11px] text-emerald-600">
+                      Paid: {currencySymbols[inv.currency]}{(inv.paidAmount || 0).toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => setPrintingInvoice(inv)}
+                      title="Print / View Official PDF"
+                      className="p-1.5 text-slate-400 hover:text-navy-950 hover:bg-slate-100 rounded-lg transition-colors"
+                    >
+                      <Printer className="w-4 h-4" />
+                    </button>
+                    {canCreateInvoice && (
+                      <button
+                        onClick={() => setEditingInvoice(inv)}
+                        title="Edit Invoice"
+                        className="p-1.5 text-slate-400 hover:text-gold-600 hover:bg-gold-50 rounded-lg transition-colors"
+                      >
+                        <Edit3 className="w-4 h-4" />
+                      </button>
+                    )}
+                    {canDeleteFinance && (
+                      <button
+                        onClick={() => handleDeleteInvoice(inv)}
+                        title="Delete Invoice"
+                        className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
@@ -152,14 +236,40 @@ export const StudentFinanceTab: React.FC<StudentFinanceTabProps> = ({
         ) : (
           <div className="divide-y divide-slate-100 rounded-2xl bg-white border border-slate-200/80 overflow-hidden">
             {payments.map((p) => (
-              <div key={p.id} className="p-3.5 flex items-center justify-between text-xs hover:bg-slate-50/50">
+              <div key={p.id} className="p-3.5 flex items-center justify-between gap-3 text-xs hover:bg-slate-50/50">
                 <div>
-                  <span className="font-bold text-navy-950 block">{p.paymentMethod} ({p.transactionReference || 'Direct'})</span>
-                  <span className="text-[11px] text-slate-400">{p.paymentDate} {p.notes ? `• ${p.notes}` : ''}</span>
+                  <span className="font-bold text-navy-950 block">
+                    {p.paymentMethod} ({p.transactionReference || 'Direct'})
+                  </span>
+                  <span className="text-[11px] text-slate-400">
+                    {p.paymentDate} {p.invoiceNumber ? `• ${p.invoiceNumber}` : ''} {p.notes ? `• ${p.notes}` : ''}
+                  </span>
                 </div>
-                <span className="font-extrabold text-emerald-600 text-sm">
-                  +{currencySymbols[p.currency]}{p.amount.toLocaleString()}
-                </span>
+                <div className="flex items-center gap-3">
+                  <span className="font-extrabold text-emerald-600 text-sm">
+                    +{currencySymbols[p.currency]}{p.amount.toLocaleString()}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    {canRecordPayment && (
+                      <button
+                        onClick={() => setEditingPayment(p)}
+                        title="Edit Payment"
+                        className="p-1.5 text-slate-400 hover:text-gold-600 hover:bg-gold-50 rounded-lg transition-colors"
+                      >
+                        <Edit3 className="w-4 h-4" />
+                      </button>
+                    )}
+                    {canDeleteFinance && (
+                      <button
+                        onClick={() => handleDeletePayment(p)}
+                        title="Delete Payment"
+                        className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
               </div>
             ))}
           </div>
@@ -187,7 +297,32 @@ export const StudentFinanceTab: React.FC<StudentFinanceTabProps> = ({
           </div>
         )}
       </div>
+
+      {/* Inline Modals for Editing Payments & Invoices directly inside Student Dossier */}
+      <PaymentFormModal
+        isOpen={!!editingPayment}
+        onClose={() => setEditingPayment(null)}
+        onSubmit={handleSavePaymentEdit}
+        students={[student]}
+        invoices={invoices}
+        initialPayment={editingPayment}
+      />
+
+      <InvoiceFormModal
+        isOpen={!!editingInvoice}
+        onClose={() => setEditingInvoice(null)}
+        onSubmit={handleSaveInvoiceEdit}
+        students={[student]}
+        initialInvoice={editingInvoice}
+      />
+
+      <InvoicePrintModal
+        isOpen={!!printingInvoice}
+        onClose={() => setPrintingInvoice(null)}
+        invoice={printingInvoice}
+        student={student}
+        payments={payments}
+      />
     </div>
   );
 };
-
